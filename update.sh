@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Arcy Desktop & Music Player - One-Command Updater
+# Arcy Music Player - One-Command Updater
 # Pulls latest updates from GitHub and installs them without losing any user data.
 # ==============================================================================
 set -e
@@ -8,7 +8,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR"
 
-echo "=== Updating Arcy Music & Desktop ==="
+echo "=== Updating Arcy Music ==="
 
 # 1. Pull latest changes if in a git repository
 if [ -d ".git" ]; then

@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use arcy_music_core::{Command as CoreCommand, PlaybackState, SystemCommand, SystemStatus};
+use arcy_music_core::{Command as CoreCommand, PlaybackState};
 use reqwest::Client;
 
 #[derive(Parser)]
-#[command(author, version, about = "Fast CLI controller for Arcy Desktop & Music Core", long_about = None)]
+#[command(author, version, about = "Fast CLI controller for Arcy Music Player", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -39,45 +39,11 @@ enum Commands {
     Lyrics,
     /// Get current playback status and track metadata
     Status,
-
-    // System & Hardware Controls
-    /// Print comprehensive system diagnostics, telemetry, and quick toggles
-    Sys,
-    /// Get or set power profile (power-saver, balanced, performance)
-    Power { mode: Option<String> },
-    /// Get or set night mode / display brightness (off, evening, night)
-    Night { mode: Option<String> },
-    /// Get or set GPU profile (default, oc, turbo)
-    Gpu { profile: Option<String> },
-    /// Toggle Game Mode (power profile + lightweight picom + feral gamemode)
-    Game,
-    /// Toggle display compositor VSync
-    Vsync,
-    /// Toggle Cloudflare WARP VPN tunnel
-    Warp,
-    /// Set system master volume (0 to 100)
-    MasterVol { level: u32 },
-    /// Toggle master audio mute
-    MasterMute,
-    /// Set screen brightness level (0 to 100)
-    Bright { level: u32 },
     /// Get or switch Arcy theme (mocha, nord, tokyo, cyberpunk, dracula, gruvbox)
     Theme { name: Option<String> },
-    /// Launch quick application (brave, terminal, code, thunar)
-    App { name: String },
-    /// Launch Arcy in Floating Dashboard Overlay mode
-    Dashboard,
-    /// Launch Arcy in Full Application Window mode
+    /// Launch Arcy Music in Native GUI mode
     Gui,
-    /// Lock desktop session
-    Lock,
-    /// Suspend / Sleep system
-    Sleep,
-    /// Reboot system
-    Reboot,
-    /// Power off system
-    Poweroff,
-    /// Update Arcy Music & Desktop to the latest version while preserving all logins and playlists
+    /// Update Arcy Music to the latest version while preserving all logins and playlists
     Update,
 }
 
@@ -138,61 +104,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-
-        // System Controls
-        Commands::Sys => {
-            let res = client.get(format!("{}/api/system/status", cli.daemon_url)).send().await?;
-            if res.status().is_success() {
-                let st: SystemStatus = res.json().await?;
-                println!("╔═══════════════════════════════════════════════════╗");
-                println!("║                 ARCY SYSTEM STATUS                ║");
-                println!("╠═══════════════════════════════════════════════════╣");
-                println!("║ Host:     {:<39} ║", format!("{} ({})", st.host.host, st.host.os));
-                println!("║ Kernel:   {:<39} ║", st.host.kernel);
-                println!("║ Uptime:   {:<39} ║", st.uptime);
-                println!("║ CPU:      {:<5.1}% | Temp: {}°C                     ║", st.cpu_usage, st.temp_celsius);
-                println!("║ RAM:      {:<5.1}% ({}/{} MB)               ║", st.ram_usage, st.ram_used_mb, st.ram_total_mb);
-                println!("║ Disk:     {:<39} ║", st.disk_usage);
-                println!("╠═══════════════════════════════════════════════════╣");
-                println!("║ Power:    {:<39} ║", st.power_profile.to_uppercase());
-                println!("║ Night:    {:<39} ║", st.night_mode.to_uppercase());
-                println!("║ GPU:      {:<39} ║", st.gpu_profile.to_uppercase());
-                println!("║ GameMode: {:<39} ║", if st.gamemode { "ACTIVE (PERFORMANCE)" } else { "OFF" });
-                println!("║ VSync:    {:<39} ║", if st.vsync { "ON" } else { "OFF" });
-                println!("║ Network:  {:<39} ║", format!("{} ({})", st.network_status, st.network_ssid));
-                println!("║ Master:   {:<39} ║", format!("{}% ({})", st.master_volume, if st.master_muted { "MUTED" } else { "UNMUTED" }));
-                println!("╚═══════════════════════════════════════════════════╝");
-            } else {
-                eprintln!("Daemon error: HTTP {}", res.status());
-            }
-        }
-        Commands::Power { mode } => {
-            if let Some(m) = mode {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SetPowerProfile(m)).await?;
-            } else {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::CyclePowerProfile).await?;
-            }
-        }
-        Commands::Night { mode } => {
-            if let Some(m) = mode {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SetNightMode(m)).await?;
-            } else {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::CycleNightMode).await?;
-            }
-        }
-        Commands::Gpu { profile } => {
-            if let Some(p) = profile {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SetGpuProfile(p)).await?;
-            } else {
-                send_sys_cmd(&client, &cli.daemon_url, SystemCommand::CycleGpuProfile).await?;
-            }
-        }
-        Commands::Game => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::ToggleGamemode).await?,
-        Commands::Vsync => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::ToggleVsync).await?,
-        Commands::Warp => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::ToggleWarp).await?,
-        Commands::MasterVol { level } => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SetMasterVolume(level)).await?,
-        Commands::MasterMute => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::ToggleMasterMute).await?,
-        Commands::Bright { level } => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SetBrightness(level)).await?,
         Commands::Theme { name } => {
             if let Some(t) = name {
                 let res = client.post(format!("{}/api/theme", cli.daemon_url)).json(&serde_json::json!({ "theme": t })).send().await?;
@@ -215,21 +126,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::App { name } => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::LaunchApp(name)).await?,
-        Commands::Dashboard => {
-            println!("Launching Arcy in Floating Dashboard Overlay mode...");
-            let _ = std::process::Command::new("arcy-gui").arg("--mode").arg("dashboard").spawn()?;
-        }
         Commands::Gui => {
-            println!("Launching Arcy in Full Window mode...");
-            let _ = std::process::Command::new("arcy-gui").arg("--mode").arg("window").spawn()?;
+            println!("Launching Arcy Music GUI...");
+            let _ = std::process::Command::new("arcy-gui").spawn()?;
         }
-        Commands::Lock => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SessionLock).await?,
-        Commands::Sleep => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SessionSleep).await?,
-        Commands::Reboot => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SessionReboot).await?,
-        Commands::Poweroff => send_sys_cmd(&client, &cli.daemon_url, SystemCommand::SessionPoweroff).await?,
         Commands::Update => {
-            println!("=== Checking for Arcy Music & Desktop updates ===");
+            println!("=== Checking for Arcy Music updates ===");
             let mut script_opt = None;
             if let Some(data_dir) = dirs::data_dir() {
                 let repo_file = data_dir.join("arcy-music/repo_path.txt");
@@ -290,21 +192,6 @@ async fn send_audio_cmd(client: &Client, daemon_url: &str, cmd: CoreCommand) -> 
         println!("Command sent successfully.");
     } else {
         eprintln!("Command failed with status: {}", res.status());
-    }
-    Ok(())
-}
-
-async fn send_sys_cmd(client: &Client, daemon_url: &str, cmd: SystemCommand) -> Result<(), Box<dyn std::error::Error>> {
-    let res = client
-        .post(format!("{}/api/system/command", daemon_url))
-        .json(&cmd)
-        .send()
-        .await?;
-
-    if res.status().is_success() {
-        println!("System command executed successfully.");
-    } else {
-        eprintln!("System command failed with status: {}", res.status());
     }
     Ok(())
 }

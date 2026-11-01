@@ -1,5 +1,5 @@
 use arcy_music_core::{
-    Command, EqConfig, PlaybackState, RepeatMode, SystemCommand, SystemStatus, Track, TrackSource,
+    Command, EqConfig, PlaybackState, RepeatMode, Track, TrackSource,
 };
 mod api;
 mod dsp;
@@ -9,7 +9,6 @@ mod lyrics;
 mod mpris;
 mod plugins;
 mod spotify;
-mod system;
 
 use axum::{
     extract::{Json, State},
@@ -40,7 +39,7 @@ pub struct AppState {
     pub playback_state: Mutex<PlaybackState>,
     pub eq_config: Arc<RwLock<EqConfig>>,
     pub mpris_state_tx: mpsc::Sender<PlaybackState>,
-    pub system: Arc<system::SystemManager>,
+    pub active_theme: Arc<tokio::sync::RwLock<String>>,
     pub spotify_login_status: Arc<tokio::sync::RwLock<api::SpotifyLoginStatus>>,
     pub stream_cache: StreamCache,
 }
@@ -316,7 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         repeat_mode: RepeatMode::Off,
     };
 
-    let sys_manager = Arc::new(system::SystemManager::new());
+    let active_theme = Arc::new(tokio::sync::RwLock::new("mocha".to_string()));
     let stream_cache: StreamCache = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     let shared_state = Arc::new(AppState {
@@ -325,7 +324,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         playback_state: Mutex::new(initial_playback_state),
         eq_config: eq_config.clone(),
         mpris_state_tx: mpris_state_tx.clone(),
-        system: sys_manager,
+        active_theme,
         spotify_login_status: Arc::new(tokio::sync::RwLock::new(api::SpotifyLoginStatus {
             status: "idle".to_string(),
             message: String::new(),
@@ -875,8 +874,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/settings", post(api::set_setting))
         .route("/api/dsp/eq", get(api::get_eq).post(api::set_eq))
         .route("/api/lyrics/{track_id}", get(api::get_lyrics))
-        .route("/api/system/status", get(get_system_status))
-        .route("/api/system/command", post(post_system_command))
         .route("/api/theme", get(api::get_theme).post(api::set_theme))
         .route("/api/playlists", get(api::get_playlists).post(api::create_playlist))
         .route("/api/playlists/{id}", delete(api::delete_playlist))
@@ -1014,25 +1011,7 @@ async fn select_audio_device(
     Json(res.map(|s| s.success()).unwrap_or(false))
 }
 
-async fn get_system_status(State(state): State<Arc<AppState>>) -> Json<SystemStatus> {
-    state.system.poll_and_update().await;
-    let handle = state.system.get_status_handle();
-    let st = handle.read().await;
-    Json(st.clone())
-}
 
-async fn post_system_command(
-    State(state): State<Arc<AppState>>,
-    Json(cmd): Json<SystemCommand>,
-) -> Json<bool> {
-    match state.system.handle_command(cmd).await {
-        Ok(_) => Json(true),
-        Err(e) => {
-            eprintln!("System command error: {}", e);
-            Json(false)
-        }
-    }
-}
 
 async fn post_command(State(state): State<Arc<AppState>>, Json(cmd): Json<Command>) -> Json<bool> {
     // HTTP layer debounce for PlayTrack / PlayTrackId

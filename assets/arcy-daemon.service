@@ -1,5 +1,5 @@
 [Unit]
-Description=Arcy Headless Background System & Audio Daemon
+Description=Arcy Headless Music Player & Audio Daemon
 After=network.target sound.target pipewire.service
 
 [Service]

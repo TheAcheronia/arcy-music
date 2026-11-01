@@ -206,9 +206,7 @@ pub struct SetThemeRequest {
 }
 
 pub async fn get_theme(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let handle = state.system.get_status_handle();
-    let st = handle.read().await;
-    let current_name = st.active_theme.clone();
+    let current_name = state.active_theme.read().await.clone();
     let current_colors = arcy_music_core::theme::ThemeColors::get_by_name(&current_name);
     let all = arcy_music_core::theme::ThemeColors::all();
     Json(serde_json::json!({
@@ -219,10 +217,8 @@ pub async fn get_theme(State(state): State<Arc<AppState>>) -> Json<serde_json::V
 }
 
 pub async fn set_theme(State(state): State<Arc<AppState>>, Json(req): Json<SetThemeRequest>) -> Json<bool> {
-    match state.system.handle_command(arcy_music_core::SystemCommand::SetTheme(req.theme)).await {
-        Ok(_) => Json(true),
-        Err(_) => Json(false),
-    }
+    *state.active_theme.write().await = req.theme;
+    Json(true)
 }
 
 #[derive(serde::Deserialize)]

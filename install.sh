@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Arcy Desktop & Music Player - Installer
+# Arcy Music Player - Installer
 # Builds and installs binaries, web assets, desktop entries, and systemd units.
 # User playlists, Spotify login, and personal settings are ALWAYS preserved.
 # ==============================================================================
@@ -14,7 +14,7 @@ ICON_DIR_SVG="${HOME}/.local/share/icons/hicolor/scalable/apps"
 ICON_DIR_PNG="${HOME}/.local/share/icons/hicolor/256x256/apps"
 SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 
-echo "=== Installing / Updating Arcy Music & Desktop ==="
+echo "=== Installing / Updating Arcy Music ==="
 
 # 1. Compile stable release binaries
 echo "-> Building optimized release binaries..."
@@ -72,8 +72,8 @@ echo "Note: Your user database, playlists, Spotify credentials, and configuratio
 echo "at $DATA_DIR/library.db have been safely preserved."
 echo ""
 echo "Commands available:"
-echo "  arcy               # CLI control & hardware telemetry"
-echo "  arcy-gui           # Native Slint Desktop Player & Control Center"
+echo "  arcy               # CLI music playback controls"
+echo "  arcy-gui           # Native Slint Music Player"
 echo "  arcy-web           # Modern Web GUI Window"
 echo "  arcy update        # Easily update to future releases"
 echo ""
