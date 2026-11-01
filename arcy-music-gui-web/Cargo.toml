@@ -1,0 +1,9 @@
+[package]
+name = "arcy-music-gui-web"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirs = "7.0.0"
+reqwest = { version = "0.13.5", features = ["json"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "time"] }

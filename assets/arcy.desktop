@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Arcy Desktop
+GenericName=System Control Center & Music Player
+Comment=Ultra-fast native control center, hardware telemetry, settings, and music player
+Exec=arcy-gui
+Icon=arcy-music
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;Settings;System;Utility;
+Keywords=music;audio;settings;player;equalizer;system;hardware;arcy;
+StartupWMClass=arcy-music-gui-native

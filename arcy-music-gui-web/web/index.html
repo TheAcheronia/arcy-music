@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="mocha">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Arcy Music (Web GUI)</title>
+  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+  <!-- Dynamic Moving Aurora & Gradient Mesh Background -->
+  <div class="aurora-container" aria-hidden="true">
+    <div class="aurora-orb orb-1"></div>
+    <div class="aurora-orb orb-2"></div>
+    <div class="aurora-orb orb-3"></div>
+    <div class="aurora-orb orb-4"></div>
+  </div>
+
+  <div id="app" class="app-container">
+
+    <!-- Top Header Bar -->
+    <header class="top-header">
+      <div class="logo-area">
+        <i class="fa-solid fa-music logo-icon"></i>
+        <span class="app-name">Arcy Music</span>
+        <span class="badge-web">WEB GUI</span>
+      </div>
+
+      <div class="now-playing-banner" id="now-playing-banner">
+        <i class="fa-solid fa-compact-disc fa-spin"></i>
+        <span id="header-now-playing-text">No track playing</span>
+      </div>
+
+      <div class="header-actions">
+        <!-- Switch to Native GUI Button -->
+        <button id="btn-switch-to-native" class="btn-switch-native" title="Switch back to high-efficiency Native GUI">
+          <i class="fa-solid fa-desktop"></i>
+          <span>Switch to Native GUI</span>
+        </button>
+
+        <!-- Exit Web GUI (Keep Playing) -->
+        <button id="btn-exit-web-gui" class="btn-icon" title="Exit Web GUI (Music keeps playing in background)">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Layout: Sidebar + Main Content -->
+    <div class="middle-layout">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-category">LIBRARY & PLAYLISTS</div>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-tab="library">
+            <i class="fa-solid fa-folder-open"></i>
+            <span>Library</span>
+          </button>
+          <button class="nav-item" data-tab="search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <span>Search Online</span>
+          </button>
+          <button class="nav-item" data-tab="queue">
+            <i class="fa-solid fa-list-ol"></i>
+            <span>Queue</span>
+          </button>
+          <button class="nav-item" data-tab="equalizer">
+            <i class="fa-solid fa-sliders"></i>
+            <span>DSP Equalizer</span>
+          </button>
+          <button class="nav-item" data-tab="lyrics">
+            <i class="fa-solid fa-microphone-lines"></i>
+            <span>Lyrics</span>
+          </button>
+          <button class="nav-item" data-tab="settings">
+            <i class="fa-solid fa-gear"></i>
+            <span>Themes & Config</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+
+        <!-- Stop Daemon & Exit -->
+        <button id="btn-stop-daemon" class="btn-stop-daemon" title="Stop background daemon and exit Arcy Music completely">
+          <i class="fa-solid fa-power-off"></i>
+          <span>Stop Daemon & Exit</span>
+        </button>
+      </aside>
+
+      <!-- Main Content Area -->
+      <main class="main-content">
+
+        <!-- 1. Tab: Library -->
+        <section id="tab-library" class="tab-pane active">
+          <!-- Subview 1: Playlists List -->
+          <div id="subview-playlists" class="subview">
+            <div class="section-header">
+              <h2>Playlists & Collections</h2>
+              <div class="header-buttons">
+                <button id="btn-create-playlist-toggle" class="btn-primary">
+                  <i class="fa-solid fa-plus"></i> New Playlist
+                </button>
+              </div>
+            </div>
+
+            <!-- New playlist input bar -->
+            <div id="new-playlist-bar" class="new-playlist-bar hidden">
+              <input type="text" id="new-playlist-input" placeholder="Playlist name...">
+              <button id="btn-create-playlist-confirm" class="btn-accent">Create</button>
+              <button id="btn-create-playlist-cancel" class="btn-secondary">Cancel</button>
+            </div>
+
+            <!-- Playlist Filter Bar -->
+            <div class="playlist-filter-bar">
+              <i class="fa-solid fa-magnifying-glass search-box-icon"></i>
+              <input type="text" id="playlist-filter-input" placeholder="Filter playlists (e.g. Liked Songs, honeypie, freshman year)...">
+              <button id="btn-clear-playlist-filter" class="btn-clear-search hidden"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div id="playlists-grid" class="playlists-grid">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+
+          <!-- Subview 2: Playlist Detail Tracks -->
+          <div id="subview-playlist-detail" class="subview hidden">
+            <!-- Playlist Detail Header -->
+            <div class="playlist-detail-header">
+              <!-- Row 1: Back Navigation, Title & Primary Actions -->
+              <div class="detail-row-top">
+                <button id="btn-back-to-playlists" class="btn-back">
+                  <i class="fa-solid fa-arrow-left"></i> Playlists
+                </button>
+                <h2 id="detail-playlist-title">Local Music</h2>
+                <span id="detail-playlist-badge" class="badge-default">DEFAULT</span>
+                <span id="detail-playlist-count" class="track-count">(0 tracks)</span>
+                <div class="flex-spacer"></div>
+                <button id="btn-play-all-playlist" class="btn-accent btn-play-all">
+                  <i class="fa-solid fa-play"></i> Play All
+                </button>
+              </div>
+
+              <!-- Row 2: Sort by Pills & Playlist Track Search -->
+              <div class="detail-row-sort">
+                <span class="sort-label">Sort by:</span>
+                <button class="sort-pill active" data-sort="custom">Default</button>
+                <button class="sort-pill" data-sort="title">Title <span class="arrow"></span></button>
+                <button class="sort-pill" data-sort="artist">Artist <span class="arrow"></span></button>
+                <button class="sort-pill" data-sort="duration">Duration <span class="arrow"></span></button>
+                <div class="flex-spacer"></div>
+                <div class="playlist-search-box">
+                  <i class="fa-solid fa-magnifying-glass search-box-icon"></i>
+                  <input type="text" id="playlist-search-input" placeholder="Search tracks in playlist...">
+                  <button id="btn-clear-playlist-search" class="btn-clear-search hidden"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Table Header -->
+            <div class="tracks-table-header">
+              <div class="col-idx">#</div>
+              <div class="col-cover"></div>
+              <div class="col-title">TITLE</div>
+              <div class="col-artist">ARTIST</div>
+              <div class="col-duration">DURATION</div>
+              <div class="col-actions"></div>
+            </div>
+
+            <!-- Tracks List -->
+            <div id="playlist-tracks-list" class="tracks-list">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Tab: Search Online -->
+        <section id="tab-search" class="tab-pane">
+          <div class="section-header">
+            <h2>Search Online Music Streams</h2>
+          </div>
+
+          <!-- Source Selector -->
+          <div class="search-source-selector">
+            <span class="sort-label">Source:</span>
+            <button class="source-pill active" data-source="YouTube">
+              <i class="fa-brands fa-youtube"></i> YouTube
+            </button>
+            <button class="source-pill" data-source="Spotify">
+              <i class="fa-brands fa-spotify"></i> Spotify
+            </button>
+          </div>
+
+          <!-- Search Input Bar -->
+          <div class="search-bar">
+            <input type="text" id="search-input" placeholder="Search track title, artist or album...">
+            <button id="btn-perform-search" class="btn-primary">
+              <i class="fa-solid fa-magnifying-glass"></i> Search
+            </button>
+          </div>
+
+          <div id="search-status-bar" class="search-status hidden">Searching online...</div>
+
+          <div id="search-results-list" class="tracks-list">
+            <!-- Rendered via JS -->
+          </div>
+        </section>
+
+        <!-- 3. Tab: Queue -->
+        <section id="tab-queue" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Playback Queue</h2>
+              <span id="queue-count-label" class="sub-label">0 tracks in queue</span>
+            </div>
+            <button id="btn-clear-queue" class="btn-danger">
+              <i class="fa-solid fa-trash-can"></i> Clear Queue
+            </button>
+          </div>
+          <div id="queue-tracks-list" class="tracks-list">
+            <!-- Rendered via JS -->
+          </div>
+        </section>
+
+        <!-- 4. Tab: DSP Equalizer -->
+        <section id="tab-equalizer" class="tab-pane">
+          <div class="section-header">
+            <h2>Digital Signal Processing Equalizer (DSP)</h2>
+            <button id="btn-toggle-eq" class="btn-accent">EQ ACTIVE</button>
+          </div>
+
+          <div class="eq-presets">
+            <button class="btn-secondary" data-preset="flat">Flat</button>
+            <button class="btn-secondary" data-preset="bass_boost">Bass Boost</button>
+            <button class="btn-secondary" data-preset="vocal">Vocal</button>
+            <button class="btn-secondary" data-preset="electronic">Electronic</button>
+            <button class="btn-secondary" data-preset="rock">Rock</button>
+          </div>
+
+          <div class="eq-sliders-container">
+            <div class="eq-band">
+              <input type="range" min="-12" max="12" step="0.5" value="0" id="eq-band-0">
+              <label>60 Hz</label>
+              <span id="eq-val-0">0 dB</span>
+            </div>
+            <div class="eq-band">
+              <input type="range" min="-12" max="12" step="0.5" value="0" id="eq-band-1">
+              <label>250 Hz</label>
+              <span id="eq-val-1">0 dB</span>
+            </div>
+            <div class="eq-band">
+              <input type="range" min="-12" max="12" step="0.5" value="0" id="eq-band-2">
+              <label>1 kHz</label>
+              <span id="eq-val-2">0 dB</span>
+            </div>
+            <div class="eq-band">
+              <input type="range" min="-12" max="12" step="0.5" value="0" id="eq-band-3">
+              <label>4 kHz</label>
+              <span id="eq-val-3">0 dB</span>
+            </div>
+            <div class="eq-band">
+              <input type="range" min="-12" max="12" step="0.5" value="0" id="eq-band-4">
+              <label>12 kHz</label>
+              <span id="eq-val-4">0 dB</span>
+            </div>
+          </div>
+
+          <!-- Spatial Audio Panel -->
+          <div class="spatial-audio-panel">
+            <div class="spatial-header">
+              <div class="spatial-title">
+                <i class="fa-solid fa-cube"></i>
+                <h3>Spatial Audio & Surround Simulation</h3>
+              </div>
+              <span id="spatial-badge" class="badge-pill">Bypass</span>
+            </div>
+            <p class="spatial-desc">Simulate expansive 3D acoustic soundstages directly through player DSP. Default is bypass to preserve the original bitstream.</p>
+            <div class="spatial-chips">
+              <button class="spatial-chip active" data-spatial="off">
+                <i class="fa-solid fa-ban"></i> Standard / Bypass
+              </button>
+              <button class="spatial-chip" data-spatial="dolby_atmos">
+                <i class="fa-solid fa-circle-nodes"></i> Dolby Atmos
+              </button>
+              <button class="spatial-chip" data-spatial="eclipsa">
+                <i class="fa-solid fa-wave-square"></i> Eclipsa Audio (IAMF)
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Tab: Lyrics -->
+        <section id="tab-lyrics" class="tab-pane">
+          <div class="lyrics-view-wrapper">
+            <div id="lyrics-ambient-bg" class="lyrics-ambient-bg"></div>
+            <div class="lyrics-header-row">
+              <div class="lyrics-title-group">
+                <h2>Live Synchronized Lyrics</h2>
+                <div class="lyrics-live-badge">
+                  <span class="pulse-indicator"></span>
+                  <span>SYNCED</span>
+                </div>
+              </div>
+            </div>
+            <div id="lyrics-container" class="lyrics-container">
+              <div class="lyrics-placeholder">Play a song to view synced lyrics</div>
+            </div>
+            <!-- Floating Sync Resume Button -->
+            <button id="btn-lyrics-resume" class="lyrics-sync-pill hidden" title="Jump to current playing lyric">
+              <i class="fa-solid fa-arrows-rotate"></i>
+              <span>Sync with Music</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- 6. Tab: Themes & Settings -->
+        <section id="tab-settings" class="tab-pane">
+          <div class="section-header">
+            <h2>Theme Engine & Customization</h2>
+          </div>
+
+          <div class="settings-section">
+            <label class="settings-title">SELECT SYSTEM & ARCY THEME:</label>
+            <div class="theme-buttons-grid">
+              <button class="theme-card active" data-theme="mocha">
+                <span class="color-dot mocha"></span> Mocha
+              </button>
+              <button class="theme-card" data-theme="nord">
+                <span class="color-dot nord"></span> Nord
+              </button>
+              <button class="theme-card" data-theme="tokyo">
+                <span class="color-dot tokyo"></span> Tokyo
+              </button>
+              <button class="theme-card" data-theme="cyberpunk">
+                <span class="color-dot cyberpunk"></span> Cyberpunk
+              </button>
+              <button class="theme-card" data-theme="dracula">
+                <span class="color-dot dracula"></span> Dracula
+              </button>
+              <button class="theme-card" data-theme="gruvbox">
+                <span class="color-dot gruvbox"></span> Gruvbox
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-section">
+            <label class="settings-title">SPOTIFY METADATA & PLAYLIST INTEGRATION:</label>
+            <p class="settings-desc">Connect your Spotify account to import Liked Songs and Playlists with rich cover art & metadata.</p>
+            <div class="spotify-actions-bar">
+              <button id="btn-spotify-import" class="btn-spotify" style="flex: 1;">
+                <i class="fa-brands fa-spotify"></i> Import from Browser
+              </button>
+              <button id="btn-spotify-login" class="btn-spotify-secondary" style="flex: 1;">
+                <i class="fa-brands fa-spotify"></i> Login with Spotify
+              </button>
+            </div>
+            <div id="spotify-status-text" class="spotify-status"></div>
+            <p class="settings-desc" style="margin-top: 12px; font-size: 0.82rem; opacity: 0.8;">Or enter sp_dc cookie / Bearer token manually:</p>
+            <div class="spotify-input-bar">
+              <input type="text" id="spotify-input" placeholder="Paste your sp_dc cookie or Bearer token...">
+              <button id="btn-sync-spotify" class="btn-spotify-secondary">
+                <i class="fa-brands fa-spotify"></i> Sync Manually
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-section">
+            <label class="settings-title">AUDIO OUTPUT SINK DEVICE:</label>
+            <p class="settings-desc">Select the physical sound device to route music audio to (Motherboard Speakers, USB Soundbar/DAC, Headphones, HDMI).</p>
+            <div class="audio-device-row">
+              <select id="audio-device-select" class="form-select"></select>
+              <button id="btn-refresh-audio-devices" class="btn-secondary" title="Refresh Output Devices">
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+            </div>
+            <div id="audio-device-status" class="settings-status-note"></div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-section">
+            <label class="settings-title">MUSIC DOWNLOAD DIRECTORY:</label>
+            <p class="settings-desc">Local directory where songs saved via the Download button will be stored as high-quality MP3s.</p>
+            <div class="download-path-row">
+              <input type="text" id="setting-download-path" placeholder="~/Music/Downloads">
+              <button id="btn-save-download-path" class="btn-primary">Save Path</button>
+            </div>
+            <div id="download-path-status" class="settings-status-note"></div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-section">
+            <label class="settings-title">GUI MODE SWITCHER:</label>
+            <p class="settings-desc">Easily switch between the high-efficiency Native GUI (&lt;45MB RAM) and this rich Web GUI at any time.</p>
+            <button id="btn-settings-switch-native" class="btn-primary">
+              <i class="fa-solid fa-desktop"></i> Switch to Native GUI Now
+            </button>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- Bottom Playback Bar -->
+    <footer class="bottom-player">
+      <!-- Left: Song details & Cover art -->
+      <div class="player-left">
+        <div class="player-cover-box" id="player-cover-box">
+          <i class="fa-solid fa-music placeholder-icon"></i>
+          <img id="player-cover-img" class="hidden" alt="Cover">
+        </div>
+        <div class="player-meta">
+          <div id="player-title" class="player-title">No track playing</div>
+          <div id="player-artist" class="player-artist">Select a song from library or search</div>
+        </div>
+      </div>
+
+      <!-- Center: Controls & Progress Seeker -->
+      <div class="player-center">
+        <div class="player-controls">
+          <button id="btn-shuffle" class="btn-ctrl" title="Shuffle"><i class="fa-solid fa-shuffle"></i></button>
+          <button id="btn-prev" class="btn-ctrl" title="Previous"><i class="fa-solid fa-backward-step"></i></button>
+          <button id="btn-play-pause" class="btn-ctrl btn-play-main" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
+          <button id="btn-next" class="btn-ctrl" title="Next"><i class="fa-solid fa-forward-step"></i></button>
+          <button id="btn-repeat" class="btn-ctrl" title="Repeat"><i class="fa-solid fa-repeat"></i></button>
+        </div>
+
+        <div class="progress-bar-container">
+          <span id="player-pos-time" class="time-text">0:00</span>
+          <div class="seeker-slider-wrap">
+            <input type="range" id="player-seeker" min="0" max="100" value="0" step="0.1">
+          </div>
+          <span id="player-dur-time" class="time-text">0:00</span>
+        </div>
+      </div>
+
+      <!-- Right: Volume & Quick Controls -->
+      <div class="player-right">
+        <button id="btn-player-queue" class="btn-ctrl" title="Queue">
+          <i class="fa-solid fa-list-ol"></i>
+        </button>
+        <button id="btn-player-lyrics" class="btn-ctrl btn-lyrics-bottom" title="Lyrics (Synced)">
+          <i class="fa-solid fa-microphone-lines"></i>
+        </button>
+        <button id="btn-mute" class="btn-ctrl"><i class="fa-solid fa-volume-high"></i></button>
+        <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0.15">
+        <span id="volume-text" class="volume-text">15%</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="app.js?v=3"></script>
+</body>
+</html>

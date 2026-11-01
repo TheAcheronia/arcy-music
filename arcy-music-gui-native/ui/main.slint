@@ -1,0 +1,2497 @@
+import { ComboBox, Slider, ListView, ScrollView } from "std-widgets.slint";
+
+export struct Track {
+    id: string,
+    title: string,
+    artist: string,
+    duration: string,
+    thumbnail: image,
+}
+
+export struct LyricItem {
+    time_secs: float,
+    text: string,
+}
+
+export struct Playlist {
+    id: string,
+    name: string,
+    track_count: int,
+    is_pinned: bool,
+    is_default: bool,
+}
+
+component ModernProgressBar inherits Rectangle {
+    in-out property <float> value: 0.0;
+    in property <float> maximum: 100.0;
+    in property <color> bar_color: #45475a;
+    in property <color> fill_color: #89b4fa;
+    in property <color> thumb_color: #cdd6f4;
+    callback seek(float);
+    callback seek_relative(float);
+
+    height: 16px;
+
+    track := Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: touch.has_hover ? 6px : 4px;
+        border-radius: 3px;
+        background: root.bar_color;
+        animate height { duration: 150ms; }
+
+        fill := Rectangle {
+            x: 0px;
+            y: 0px;
+            height: parent.height;
+            width: root.maximum > 0.0 ? Math.clamp(root.value / root.maximum, 0.0, 1.0) * parent.width : 0px;
+            border-radius: 3px;
+            background: root.fill_color;
+        }
+
+        thumb := Rectangle {
+            x: Math.max(0px, (root.maximum > 0.0 ? Math.clamp(root.value / root.maximum, 0.0, 1.0) * parent.width : 0px) - (self.width / 2));
+            y: (parent.height - self.height) / 2;
+            width: touch.has_hover ? 12px : 8px;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: root.thumb_color;
+            opacity: touch.has_hover ? 1.0 : 0.85;
+            animate width { duration: 150ms; }
+        }
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && (event.kind == PointerEventKind.down || (self.pressed && event.kind == PointerEventKind.move))) {
+                let ratio = Math.clamp(self.mouse-x / self.width, 0.0, 1.0);
+                root.seek(ratio * root.maximum);
+            }
+        }
+        scroll-event(event) => {
+            if event.delta_y != 0 {
+                root.seek_relative(event.delta_y > 0 ? -5.0 : 5.0);
+                return accept;
+            }
+            reject
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "Arcy Music";
+    default-font-family: "JetBrainsMono Nerd Font";
+    preferred-width: 1120px;
+    preferred-height: 740px;
+    min-width: 900px;
+    min-height: 620px;
+    background: root.t_bg_base;
+    no-frame: root.is_frameless;
+
+    // Window State
+    in-out property <bool> is_maximized: false;
+    in-out property <bool> is_dashboard_mode: false;
+    in property <bool> is_frameless: false;
+
+    // Dynamic Theme Engine Properties
+    in-out property <string> theme_name: "mocha";
+    in-out property <color> t_bg_base: #1e1e2e;
+    in-out property <color> t_bg_surface: #181825;
+    in-out property <color> t_bg_overlay: #11111b;
+    in-out property <color> t_card_bg: #313244;
+    in-out property <color> t_accent: #89b4fa;
+    in-out property <color> t_accent_secondary: #cba6f7;
+    in-out property <color> t_accent_pink: #f5c2e7;
+    in-out property <color> t_accent_green: #a6e3a1;
+    in-out property <color> t_accent_yellow: #f9e2af;
+    in-out property <color> t_accent_red: #f38ba8;
+    in-out property <color> t_text_primary: #cdd6f4;
+    in-out property <color> t_text_secondary: #bac2de;
+    in-out property <color> t_text_muted: #a6adc8;
+    in-out property <color> t_border: #45475a;
+
+    // Navigation & Tabs: "library", "search", "queue", "equalizer", "lyrics", "settings"
+    in-out property <string> current_tab: "library";
+
+    // Profile & Cover Art Images
+    in property <image> user_avatar;
+    in property <image> current_track_thumbnail;
+    in property <[float]> visualizer_bars: [0.2, 0.5, 0.8, 0.9, 0.7, 0.4, 0.6, 0.85, 0.95, 0.75, 0.5, 0.3, 0.65, 0.8, 0.45, 0.25];
+
+    // Music Player State
+    in property <[Track]> library_tracks;
+    in property <[Track]> queue_tracks;
+    in property <string> current_track_title: "No track playing";
+    in property <string> current_track_artist: "Select a song from library or search";
+    in property <string> current_track_id: "";
+    in property <bool> is_playing: false;
+    in property <bool> is_shuffle: false;
+    in property <string> repeat_mode: "Off";
+
+    // Volume & Timing
+    in-out property <float> volume: 0.15;
+    property <float> previous_volume: 0.15;
+    in-out property <float> playback_position: 0.0;
+    in-out property <float> playback_duration: 100.0;
+    in property <string> playback_position_str: "0:00";
+    in property <string> playback_duration_str: "0:00";
+
+    // Search state
+    in-out property <string> search_query: "";
+    in-out property <[Track]> search_results: [];
+    in-out property <bool> is_searching: false;
+    in-out property <string> search_source: "YouTube";
+
+    // Equalizer state
+    in-out property <bool> eq_enabled: false;
+    in-out property <float> eq_band0: 0.0; // 60 Hz
+    in-out property <float> eq_band1: 0.0; // 250 Hz
+    in-out property <float> eq_band2: 0.0; // 1 kHz
+    in-out property <float> eq_band3: 0.0; // 4 kHz
+    in-out property <float> eq_band4: 0.0; // 12 kHz
+    in-out property <string> eq_spatial_mode: "off";
+
+    // Lyrics state
+    in property <string> plain_lyrics: "";
+    in property <[LyricItem]> synced_lyrics: [];
+    in-out property <int> active_lyric_index: 0;
+    in-out property <length> lyrics_viewport_y: 0px;
+    in-out property <bool> lyrics_auto_locked: true;
+    in-out property <float> last_lyrics_target_y: 0.0;
+    in-out property <int> lyrics_suppress_ticks: 0;
+
+    // Playlists & Library State
+    in-out property <[Playlist]> playlists: [];
+    in-out property <string> current_playlist_id: "";
+    in-out property <string> current_playlist_name: "";
+    in-out property <bool> current_playlist_is_default: false;
+    in-out property <[Track]> playlist_tracks: [];
+    in-out property <bool> is_creating_playlist: false;
+    in-out property <string> new_playlist_name: "";
+    in-out property <string> playlist_sort_mode: "custom";
+    in-out property <bool> is_editing_playlist: false;
+    in-out property <string> playlist_search_query: "";
+    in-out property <bool> is_searching_playlist: false;
+    in-out property <string> playlist_filter_query: "";
+
+    // Settings
+    in-out property <bool> setting_mini_thumbnails: false;
+    in-out property <string> setting_download_path: "";
+
+    // Spotify Integration State
+    in-out property <string> spotify_sp_dc_input: "";
+    in-out property <string> spotify_sync_status: "";
+    in-out property <bool> is_syncing_spotify: false;
+    in-out property <bool> spotify_cookie_revealed: false;
+    in-out property <bool> is_logging_in_spotify: false;
+    callback sync_spotify(string);
+    callback spotify_import_browser();
+    callback spotify_launch_login();
+
+    // Window & Theme Callbacks
+    callback switch_theme(string);
+    callback toggle_maximize();
+    callback exit_gui();
+    callback stop_daemon_and_exit();
+    callback toggle_gui_mode();
+    callback switch_to_web_gui();
+    callback close_window();
+
+    // Music Callbacks
+    callback seek(float);
+    callback seek_relative(float);
+    callback play_track(string);
+    callback toggle_play();
+    callback next_track();
+    callback prev_track();
+    callback toggle_shuffle();
+    callback toggle_repeat();
+    callback volume_changed(float);
+    callback toggle_mute();
+    callback perform_search(string, string);
+    callback play_search_track(string);
+    callback download_track(string);
+    callback enqueue_track(string);
+    callback clear_queue();
+    callback remove_from_queue(int);
+    callback update_eq();
+    callback apply_eq_preset(string);
+    callback toggle_mini_thumbnails();
+    callback update_download_path(string);
+
+    // Playlist Callbacks
+    callback open_playlist(string);
+    callback close_playlist();
+    callback play_playlist_track(string, int);
+    callback play_playlist_all(string);
+    callback create_playlist(string);
+    callback delete_playlist(string);
+    callback toggle_pin_playlist(string);
+    callback move_playlist(string, string);
+    callback add_track_to_playlist(string, string);
+    callback remove_track_from_playlist(string, string);
+    callback set_playlist_sort(string);
+    callback filter_playlist_tracks(string);
+    callback filter_playlists(string);
+    callback toggle_playlist_edit_mode();
+    callback move_playlist_track(string, int, string);
+
+    toggle_mute => {
+        if (root.volume > 0.0) {
+            root.previous_volume = root.volume;
+            root.volume = 0.0;
+        } else {
+            root.volume = root.previous_volume > 0.0 ? root.previous_volume : 0.15;
+        }
+        root.volume_changed(root.volume);
+    }
+
+    forward-focus: main_focus;
+
+    main_focus := FocusScope {
+        key-pressed(event) => {
+            if root.is_creating_playlist || root.current_tab == "search" || root.playlist_search_query != "" || root.is_searching_playlist {
+                return reject;
+            }
+            if event.text == " " {
+                root.toggle_play();
+                return accept;
+            }
+            if event.text == Key.RightArrow {
+                root.seek_relative(5.0);
+                return accept;
+            }
+            if event.text == Key.LeftArrow {
+                root.seek_relative(-5.0);
+                return accept;
+            }
+            if event.text == "n" || event.text == "N" {
+                root.next_track();
+                return accept;
+            }
+            if event.text == "p" || event.text == "P" {
+                root.prev_track();
+                return accept;
+            }
+            if event.text == "m" || event.text == "M" {
+                root.toggle_mute();
+                return accept;
+            }
+            reject
+        }
+
+        // MAIN CONTAINER
+        Rectangle {
+        width: 100%;
+        height: 100%;
+        background: root.t_bg_base;
+
+            VerticalLayout {
+            width: 100%;
+            height: 100%;
+            spacing: 0px;
+
+            // Top Header Bar
+            Rectangle {
+                height: 40px;
+                background: root.t_bg_surface;
+
+                HorizontalLayout {
+                    padding-left: 16px; padding-right: 16px;
+                    spacing: 12px;
+                    alignment: center;
+
+                    // Logo & App Name
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: center;
+                        Text { text: "󰎆"; font-size: 20px; color: root.t_accent; vertical-alignment: center; }
+                        Text { text: "Arcy Music"; font-size: 14px; font-weight: 800; color: root.t_text_primary; vertical-alignment: center; }
+                        Rectangle {
+                            width: 36px; height: 18px; border-radius: 4px;
+                            background: root.t_accent_secondary.transparentize(85%);
+                            border-width: 1px;
+                            border-color: root.t_accent_secondary.transparentize(60%);
+                            HorizontalLayout { alignment: center; Text { text: "v2.0"; font-size: 9px; font-weight: 800; color: root.t_accent_secondary; vertical-alignment: center; } }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    // Now playing status indicator chip (subtle pill)
+                    if root.is_playing: Rectangle {
+                        height: 28px;
+                        border-radius: 14px;
+                        background: root.t_card_bg;
+                        border-width: 1px;
+                        border-color: root.t_accent.transparentize(70%);
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 8px; alignment: center;
+                            Text { text: "󰎈"; font-size: 13px; color: root.t_accent_green; vertical-alignment: center; }
+                            Text { text: root.current_track_title; font-size: 11px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; overflow: elide; }
+                            if root.current_track_artist != "": Text { text: "· \{root.current_track_artist}"; font-size: 11px; color: root.t_text_muted; vertical-alignment: center; overflow: elide; }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            // Middle horizontal area (Sidebar + Content Area)
+            HorizontalLayout {
+                vertical-stretch: 1;
+
+                // Sidebar
+                Rectangle {
+                    width: 220px;
+                    background: root.t_bg_surface;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 6px;
+
+                        // Category: LIBRARY & PLAYLISTS
+                        HorizontalLayout {
+                            height: 24px;
+                            padding-left: 8px;
+                            Text { text: "LIBRARY & PLAYLISTS"; font-size: 11px; font-weight: 700; color: root.t_text_muted; vertical-alignment: center; }
+                        }
+
+                        // Library
+                        tab_lib := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if root.current_tab == "library" && root.current_playlist_id != "" {
+                                    root.current_playlist_id = "";
+                                    root.close_playlist();
+                                } else {
+                                    root.current_tab = "library";
+                                }
+                            }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "library"
+                                    ? (tab_lib.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_lib.pressed ? root.t_card_bg.transparentize(50%) : (tab_lib.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: "󰀥"; font-size: 15px; color: root.current_tab == "library" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "Library"; font-size: 13px; font-weight: root.current_tab == "library" ? 700 : 500; color: root.current_tab == "library" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // Search Online
+                        tab_search := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => { root.current_tab = "search"; }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "search"
+                                    ? (tab_search.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_search.pressed ? root.t_card_bg.transparentize(50%) : (tab_search.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: "󰍉"; font-size: 15px; color: root.current_tab == "search" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "Search Online"; font-size: 13px; font-weight: root.current_tab == "search" ? 700 : 500; color: root.current_tab == "search" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // Queue
+                        tab_queue := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => { root.current_tab = "queue"; }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "queue"
+                                    ? (tab_queue.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_queue.pressed ? root.t_card_bg.transparentize(50%) : (tab_queue.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: "󰒺"; font-size: 15px; color: root.current_tab == "queue" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "Queue"; font-size: 13px; font-weight: root.current_tab == "queue" ? 700 : 500; color: root.current_tab == "queue" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // DSP Equalizer
+                        tab_eq := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => { root.current_tab = "equalizer"; }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "equalizer"
+                                    ? (tab_eq.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_eq.pressed ? root.t_card_bg.transparentize(50%) : (tab_eq.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: "󰓃"; font-size: 15px; color: root.current_tab == "equalizer" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "DSP Equalizer"; font-size: 13px; font-weight: root.current_tab == "equalizer" ? 700 : 500; color: root.current_tab == "equalizer" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // Lyrics
+                        tab_lyrics := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => { root.current_tab = "lyrics"; }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "lyrics"
+                                    ? (tab_lyrics.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_lyrics.pressed ? root.t_card_bg.transparentize(50%) : (tab_lyrics.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: "󰎈"; font-size: 15px; color: root.current_tab == "lyrics" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "Lyrics"; font-size: 13px; font-weight: root.current_tab == "lyrics" ? 700 : 500; color: root.current_tab == "lyrics" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // Themes & Config
+                        tab_settings := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.current_tab = "settings";
+                                root.spotify_cookie_revealed = false;
+                            }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: root.current_tab == "settings"
+                                    ? (tab_settings.pressed ? root.t_card_bg.darker(10%) : root.t_card_bg)
+                                    : (tab_settings.pressed ? root.t_card_bg.transparentize(50%) : (tab_settings.has-hover ? root.t_card_bg.transparentize(70%) : transparent));
+                                animate background { duration: 100ms; }
+                                HorizontalLayout {
+                                    padding-left: 12px; spacing: 12px;
+                                    Text { text: ""; font-size: 15px; color: root.current_tab == "settings" ? root.t_accent : root.t_text_muted; vertical-alignment: center; }
+                                    Text { text: "Themes & Config"; font-size: 13px; font-weight: root.current_tab == "settings" ? 700 : 500; color: root.current_tab == "settings" ? root.t_text_primary : root.t_text_secondary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        Rectangle { vertical-stretch: 1; }
+
+                        // Switch to Web GUI Button
+                        web_sw_touch := TouchArea {
+                            height: 36px;
+                            mouse-cursor: pointer;
+                            clicked => { root.switch_to_web_gui(); }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: web_sw_touch.pressed ? root.t_card_bg.darker(10%) : (web_sw_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: web_sw_touch.has-hover ? root.t_accent_secondary : root.t_border;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰖟"; font-size: 14px; color: root.t_accent_secondary; vertical-alignment: center; }
+                                    Text { text: "Switch to Web GUI"; font-size: 11px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        // Stop Daemon & Exit Button (at bottom of sidebar, above bottom player bar)
+                        stop_d_touch := TouchArea {
+                            height: 38px;
+                            mouse-cursor: pointer;
+                            clicked => { root.stop_daemon_and_exit(); }
+                            Rectangle {
+                                width: 100%; height: 100%;
+                                border-radius: 8px;
+                                background: stop_d_touch.pressed ? root.t_accent_red.transparentize(50%) : (stop_d_touch.has-hover ? root.t_accent_red.transparentize(80%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: stop_d_touch.has-hover ? root.t_accent_red : root.t_accent_red.transparentize(60%);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰐥"; font-size: 14px; color: root.t_accent_red; vertical-alignment: center; }
+                                    Text { text: "Stop Daemon & Exit"; font-size: 11px; font-weight: 700; color: root.t_accent_red; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { width: 1px; background: root.t_border; }
+
+                // Main Content Body
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: root.t_bg_base;
+
+                    // 3. Tab: Library (Holder of Playlists & Collections)
+                    if root.current_tab == "library": VerticalLayout {
+                        padding: 20px; spacing: 14px;
+
+                        // Subview 1: All Playlists (Holder)
+                        if root.current_playlist_id == "": VerticalLayout {
+                            spacing: 14px;
+                            HorizontalLayout {
+                                Text { text: "Playlists & Music Collections"; font-size: 20px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+
+                                // Reorder / Edit Mode Toggle Button
+                                Rectangle {
+                                    height: 34px; border-radius: 8px; horizontal-stretch: 0;
+                                    background: root.is_editing_playlist ? root.t_accent : (edit_pl_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    border-width: 1px;
+                                    border-color: root.is_editing_playlist ? root.t_accent : (edit_pl_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border);
+                                    animate background { duration: 100ms; }
+                                    edit_pl_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.toggle_playlist_edit_mode(); }
+                                    }
+                                    HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px; alignment: center;
+                                        Text { text: "󰏫"; font-size: 13px; color: root.is_editing_playlist ? #11111b : root.t_accent; vertical-alignment: center; }
+                                        Text { text: root.is_editing_playlist ? "Done Reordering" : "Reorder"; font-size: 12px; font-weight: 700; color: root.is_editing_playlist ? #11111b : root.t_text_primary; vertical-alignment: center; }
+                                    }
+                                }
+
+                                Rectangle { width: 8px; }
+
+                                Rectangle {
+                                    width: 140px; height: 34px; border-radius: 8px;
+                                    background: new_pl_touch.pressed ? root.t_accent.darker(15%) : (new_pl_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                    animate background { duration: 100ms; }
+                                    new_pl_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.is_creating_playlist = !root.is_creating_playlist; }
+                                    }
+                                    HorizontalLayout { alignment: center; spacing: 6px; Text { text: "+ New Playlist"; font-size: 12px; font-weight: 700; color: #11111b; vertical-alignment: center; } }
+                                }
+                            }
+
+                            // Inline New Playlist Input
+                            if root.is_creating_playlist: Rectangle {
+                                height: 46px; border-radius: 8px; background: root.t_card_bg;
+                                HorizontalLayout {
+                                    padding-left: 14px; padding-right: 14px; spacing: 10px;
+                                    TextInput {
+                                        horizontal-stretch: 1; text <=> root.new_playlist_name;
+                                        color: root.t_text_primary; font-size: 13px; vertical-alignment: center;
+                                        init => { self.focus(); }
+                                        accepted => {
+                                            if (root.new_playlist_name != "") {
+                                                root.create_playlist(root.new_playlist_name);
+                                                root.new_playlist_name = "";
+                                                root.is_creating_playlist = false;
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        width: 70px; height: 30px; border-radius: 6px;
+                                        background: cr_touch.pressed ? root.t_accent.darker(15%) : (cr_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                        animate background { duration: 100ms; }
+                                        cr_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                if (root.new_playlist_name != "") {
+                                                    root.create_playlist(root.new_playlist_name);
+                                                    root.new_playlist_name = "";
+                                                    root.is_creating_playlist = false;
+                                                }
+                                            }
+                                        }
+                                        Text { text: "Create"; font-size: 11px; font-weight: 700; color: #11111b; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    Rectangle {
+                                        width: 60px; height: 30px; border-radius: 6px;
+                                        background: can_touch.pressed ? root.t_bg_surface.darker(15%) : (can_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_bg_surface);
+                                        animate background { duration: 100ms; }
+                                        can_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.is_creating_playlist = false; }
+                                        }
+                                        Text { text: "Cancel"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+
+                            // Playlist Filter Search Bar
+                            Rectangle {
+                                height: 38px; border-radius: 10px; background: root.t_card_bg;
+                                border-width: 1px; border-color: root.t_border;
+                                HorizontalLayout {
+                                    padding-left: 14px; padding-right: 14px; spacing: 10px;
+                                    Text {
+                                        text: "󰍉";
+                                        font-size: 14px;
+                                        color: root.t_text_muted;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                        width: 18px;
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        clip: true;
+                                        if root.playlist_filter_query == "": Text {
+                                            x: 0px;
+                                            width: 100%;
+                                            text: "Filter playlists...";
+                                            font-size: 13px;
+                                            color: root.t_text_muted;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: left;
+                                        }
+                                        TextInput {
+                                            width: 100%; height: 100%;
+                                            text <=> root.playlist_filter_query;
+                                            color: root.t_text_primary; font-size: 13px; vertical-alignment: center;
+                                            horizontal-alignment: left;
+                                            edited => { root.filter_playlists(self.text); }
+                                        }
+                                    }
+                                    if root.playlist_filter_query != "": Rectangle {
+                                        width: 20px; height: 20px; border-radius: 10px;
+                                        background: clr_pl_f_touch.has-hover ? root.t_bg_surface : transparent;
+                                        clr_pl_f_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.playlist_filter_query = "";
+                                                root.filter_playlists("");
+                                            }
+                                        }
+                                        Text { text: "✕"; font-size: 10px; color: root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+
+                            // Playlists List
+                            ListView {
+                                for pl in root.playlists: Rectangle {
+                                    height: 68px;
+                                    background: transparent;
+
+                                    Rectangle {
+                                        y: 4px;
+                                        height: 60px;
+                                        border-radius: 10px;
+                                        background: pl_touch.has-hover ? root.t_card_bg.brighter(8%) : root.t_card_bg;
+                                        border-width: 1px;
+                                        border-color: pl_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border;
+                                        animate background { duration: 100ms; }
+                                        animate border-color { duration: 100ms; }
+
+                                        HorizontalLayout {
+                                            padding-left: 14px; padding-right: 14px; spacing: 12px;
+
+                                            // Clickable playlist info area
+                                            Rectangle {
+                                                horizontal-stretch: 1;
+                                                pl_touch := TouchArea {
+                                                    width: 100%;
+                                                    height: 100%;
+                                                    mouse-cursor: pointer;
+                                                    clicked => {
+                                                        root.current_playlist_id = pl.id;
+                                                        root.current_playlist_name = pl.name;
+                                                        root.current_playlist_is_default = pl.is_default;
+                                                        root.open_playlist(pl.id);
+                                                    }
+                                                }
+
+                                                HorizontalLayout {
+                                                    spacing: 14px;
+                                                    Rectangle {
+                                                        width: 44px; height: 44px; border-radius: 8px; clip: true;
+                                                        background: pl.is_default
+                                                            ? @linear-gradient(135deg, root.t_accent.transparentize(20%), root.t_accent_secondary.transparentize(20%))
+                                                            : root.t_bg_surface;
+                                                        border-width: 1px;
+                                                        border-color: root.t_border;
+                                                        Text {
+                                                            text: pl.is_default ? "󰀥" : "󰲸";
+                                                            font-size: 20px;
+                                                            color: pl.is_default ? #11111b : root.t_accent;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                    VerticalLayout {
+                                                        alignment: center; spacing: 3px; horizontal-stretch: 1;
+                                                        HorizontalLayout {
+                                                            spacing: 8px; alignment: start;
+                                                            Text { text: pl.name; font-size: 14px; font-weight: 700; color: pl_touch.has-hover ? root.t_accent : root.t_text_primary; vertical-alignment: center; }
+                                                            if pl.is_default: Rectangle {
+                                                                width: 58px; height: 18px; border-radius: 4px; background: root.t_accent;
+                                                                HorizontalLayout { alignment: center; Text { text: "DEFAULT"; font-size: 9px; font-weight: 800; color: #11111b; vertical-alignment: center; } }
+                                                            }
+                                                        }
+                                                        Text { text: "\{pl.track_count} tracks"; font-size: 11px; color: root.t_text_muted; }
+                                                    }
+                                                }
+                                            }
+                                            // Quick Play Button
+                                            Rectangle {
+                                                width: 34px; height: 34px; border-radius: 17px;
+                                                background: qp_touch.pressed ? root.t_accent.darker(15%) : (qp_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                                animate background { duration: 100ms; }
+                                                qp_touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.play_playlist_all(pl.id); }
+                                                }
+                                                Text { text: "󰐊"; font-size: 14px; font-weight: 800; color: #11111b; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+
+                                            // Management Buttons: Cleanly revealed in Edit/Reorder Mode
+                                            if root.is_editing_playlist: HorizontalLayout {
+                                                spacing: 6px; alignment: center;
+
+                                                // Reorder Up
+                                                Rectangle {
+                                                    width: 28px; height: 28px; border-radius: 6px;
+                                                    background: up_touch.pressed ? root.t_bg_surface.darker(15%) : (up_touch.has-hover ? root.t_card_bg.brighter(20%) : root.t_bg_surface);
+                                                    animate background { duration: 100ms; }
+                                                    up_touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.move_playlist(pl.id, "up"); }
+                                                    }
+                                                    Text { text: "▲"; font-size: 11px; color: up_touch.has-hover ? root.t_accent : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+
+                                                // Reorder Down
+                                                Rectangle {
+                                                    width: 28px; height: 28px; border-radius: 6px;
+                                                    background: dn_touch.pressed ? root.t_bg_surface.darker(15%) : (dn_touch.has-hover ? root.t_card_bg.brighter(20%) : root.t_bg_surface);
+                                                    animate background { duration: 100ms; }
+                                                    dn_touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.move_playlist(pl.id, "down"); }
+                                                    }
+                                                    Text { text: "▼"; font-size: 11px; color: dn_touch.has-hover ? root.t_accent : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+
+                                                // Pin Toggle
+                                                Rectangle {
+                                                    width: 28px; height: 28px; border-radius: 6px;
+                                                    background: pin_touch.pressed ? root.t_card_bg.darker(10%) : (pin_touch.has-hover ? (pl.is_pinned ? root.t_accent.brighter(10%) : root.t_card_bg.brighter(20%)) : (pl.is_pinned ? root.t_accent : root.t_bg_surface));
+                                                    animate background { duration: 100ms; }
+                                                    pin_touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.toggle_pin_playlist(pl.id); }
+                                                    }
+                                                    Text { text: "󰤱"; font-size: 13px; color: pl.is_pinned ? #11111b : (pin_touch.has-hover ? root.t_accent : root.t_text_muted); horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+
+                                                // Delete (Only for custom playlists)
+                                                if !pl.is_default: Rectangle {
+                                                    width: 28px; height: 28px; border-radius: 6px;
+                                                    background: del_touch.pressed ? root.t_accent_red.transparentize(40%) : (del_touch.has-hover ? root.t_accent_red.transparentize(70%) : root.t_bg_surface);
+                                                    animate background { duration: 100ms; }
+                                                    del_touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.delete_playlist(pl.id); }
+                                                    }
+                                                    Text { text: "󰩹"; font-size: 13px; color: del_touch.has-hover ? root.t_accent_red : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Subview 2: Specific Playlist Tracks
+                        if root.current_playlist_id != "": VerticalLayout {
+                            spacing: 12px;
+
+                            // Row 1: Back Navigation, Title & Main Actions
+                            HorizontalLayout {
+                                height: 36px;
+                                spacing: 14px;
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 116px; height: 34px; border-radius: 8px; horizontal-stretch: 0;
+                                    background: back_touch.pressed ? root.t_card_bg.darker(15%) : (back_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    border-width: 1px;
+                                    border-color: back_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border;
+                                    animate background { duration: 100ms; }
+                                    animate border-color { duration: 100ms; }
+                                    back_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.close_playlist(); }
+                                    }
+                                    HorizontalLayout { alignment: center; spacing: 8px; Text { text: "󰁍 Playlists"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                                }
+
+                                Text { text: root.current_playlist_name; font-size: 20px; font-weight: 800; color: root.t_text_primary; vertical-alignment: center; }
+                                if root.current_playlist_is_default: Rectangle {
+                                    width: 58px; height: 18px; border-radius: 4px; background: root.t_accent; horizontal-stretch: 0;
+                                    HorizontalLayout { alignment: center; Text { text: "DEFAULT"; font-size: 9px; font-weight: 800; color: #11111b; vertical-alignment: center; } }
+                                }
+                                Text { text: "(\{root.playlist_tracks.length} tracks)"; font-size: 12px; color: root.t_text_muted; vertical-alignment: center; }
+
+                                Rectangle { horizontal-stretch: 1; }
+
+                                // Edit / Reorder Mode Toggle Button
+                                Rectangle {
+                                    height: 34px; border-radius: 8px; horizontal-stretch: 0;
+                                    background: root.is_editing_playlist ? root.t_accent : (edit_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    border-width: 1px;
+                                    border-color: root.is_editing_playlist ? root.t_accent : (edit_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border);
+                                    animate background { duration: 100ms; }
+                                    edit_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.toggle_playlist_edit_mode(); }
+                                    }
+                                    HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px; alignment: center;
+                                        Text { text: "󰏫"; font-size: 13px; color: root.is_editing_playlist ? #11111b : root.t_accent; vertical-alignment: center; }
+                                        Text { text: root.is_editing_playlist ? "Done Reordering" : "Reorder"; font-size: 12px; font-weight: 700; color: root.is_editing_playlist ? #11111b : root.t_text_primary; vertical-alignment: center; }
+                                    }
+                                }
+
+                                // Play All Button
+                                Rectangle {
+                                    width: 110px; height: 34px; border-radius: 8px; horizontal-stretch: 0;
+                                    background: pl_all_touch.pressed ? root.t_accent.darker(15%) : (pl_all_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                    animate background { duration: 100ms; }
+                                    pl_all_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.play_playlist_all(root.current_playlist_id); }
+                                    }
+                                    HorizontalLayout { alignment: center; spacing: 6px; Text { text: "󰐊 Play All"; font-size: 12px; font-weight: 800; color: #11111b; vertical-alignment: center; } }
+                                }
+                            }
+
+                            // Row 2: Sort by Options Pill Bar & Helper status
+                            HorizontalLayout {
+                                height: 28px;
+                                spacing: 8px;
+                                alignment: center;
+
+                                Text { text: "Sort by:"; font-size: 11px; font-weight: 700; color: root.t_text_muted; vertical-alignment: center; }
+
+                                // Default/Custom Pill
+                                Rectangle {
+                                    height: 24px; border-radius: 12px; horizontal-stretch: 0;
+                                    background: root.playlist_sort_mode == "custom" ? root.t_accent : (sort_custom_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    animate background { duration: 100ms; }
+                                    sort_custom_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.set_playlist_sort("custom"); }
+                                    }
+                                    HorizontalLayout { padding-left: 10px; padding-right: 10px; alignment: center;
+                                        Text { text: "Default"; font-size: 10px; font-weight: 700; color: root.playlist_sort_mode == "custom" ? #11111b : root.t_text_secondary; vertical-alignment: center; }
+                                    }
+                                }
+
+                                // Title Pill
+                                Rectangle {
+                                    height: 24px; border-radius: 12px; horizontal-stretch: 0;
+                                    background: (root.playlist_sort_mode == "title_asc" || root.playlist_sort_mode == "title_desc") ? root.t_accent : (sort_title_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    animate background { duration: 100ms; }
+                                    sort_title_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            if root.playlist_sort_mode == "title_asc" {
+                                                root.set_playlist_sort("title_desc");
+                                            } else {
+                                                root.set_playlist_sort("title_asc");
+                                            }
+                                        }
+                                    }
+                                    HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 4px; alignment: center;
+                                        Text { text: "Title"; font-size: 10px; font-weight: 700; color: (root.playlist_sort_mode == "title_asc" || root.playlist_sort_mode == "title_desc") ? #11111b : root.t_text_secondary; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "title_asc": Text { text: "▲"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "title_desc": Text { text: "▼"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                    }
+                                }
+
+                                // Artist Pill
+                                Rectangle {
+                                    height: 24px; border-radius: 12px; horizontal-stretch: 0;
+                                    background: (root.playlist_sort_mode == "artist_asc" || root.playlist_sort_mode == "artist_desc") ? root.t_accent : (sort_artist_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    animate background { duration: 100ms; }
+                                    sort_artist_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            if root.playlist_sort_mode == "artist_asc" {
+                                                root.set_playlist_sort("artist_desc");
+                                            } else {
+                                                root.set_playlist_sort("artist_asc");
+                                            }
+                                        }
+                                    }
+                                    HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 4px; alignment: center;
+                                        Text { text: "Artist"; font-size: 10px; font-weight: 700; color: (root.playlist_sort_mode == "artist_asc" || root.playlist_sort_mode == "artist_desc") ? #11111b : root.t_text_secondary; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "artist_asc": Text { text: "▲"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "artist_desc": Text { text: "▼"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                    }
+                                }
+
+                                // Duration Pill
+                                Rectangle {
+                                    height: 24px; border-radius: 12px; horizontal-stretch: 0;
+                                    background: (root.playlist_sort_mode == "duration_asc" || root.playlist_sort_mode == "duration_desc") ? root.t_accent : (sort_dur_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    animate background { duration: 100ms; }
+                                    sort_dur_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            if root.playlist_sort_mode == "duration_asc" {
+                                                root.set_playlist_sort("duration_desc");
+                                            } else {
+                                                root.set_playlist_sort("duration_asc");
+                                            }
+                                        }
+                                    }
+                                    HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 4px; alignment: center;
+                                        Text { text: "Duration"; font-size: 10px; font-weight: 700; color: (root.playlist_sort_mode == "duration_asc" || root.playlist_sort_mode == "duration_desc") ? #11111b : root.t_text_secondary; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "duration_asc": Text { text: "▲"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                        if root.playlist_sort_mode == "duration_desc": Text { text: "▼"; font-size: 8px; color: #11111b; vertical-alignment: center; }
+                                    }
+                                }
+
+                                Rectangle { horizontal-stretch: 1; }
+
+                                if root.is_editing_playlist: Text {
+                                    text: "Tip: Use ▲ and ▼ on tracks to reorder your playlist";
+                                    font-size: 11px; font-weight: 600; color: root.t_accent; vertical-alignment: center;
+                                }
+
+                                // Playlist Track Search Input
+                                Rectangle {
+                                    width: 180px; height: 26px; border-radius: 6px; horizontal-stretch: 0;
+                                    background: root.t_bg_surface;
+                                    border-width: 1px;
+                                    border-color: root.is_searching_playlist ? root.t_accent : root.t_border;
+                                    animate border-color { duration: 100ms; }
+
+                                    TouchArea {
+                                        width: root.playlist_search_query != "" ? 150px : 180px;
+                                        height: 100%;
+                                        mouse-cursor: text;
+                                        clicked => {
+                                            root.is_searching_playlist = true;
+                                            pl_search_in.focus();
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 8px; padding-right: 6px; spacing: 6px; alignment: center;
+                                        Text { text: "🔍"; font-size: 10px; color: root.t_text_muted; vertical-alignment: center; }
+                                        pl_search_in := TextInput {
+                                            horizontal-stretch: 1;
+                                            height: 100%;
+                                            text <=> root.playlist_search_query;
+                                            font-size: 11px;
+                                            color: root.t_text_primary;
+                                            vertical-alignment: center;
+                                            edited => {
+                                                root.is_searching_playlist = true;
+                                                root.filter_playlist_tracks(self.text);
+                                            }
+                                            accepted => {
+                                                root.filter_playlist_tracks(self.text);
+                                            }
+                                        }
+                                        if root.playlist_search_query != "": Rectangle {
+                                            width: 16px; height: 16px; border-radius: 8px;
+                                            clr_pl_touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    root.playlist_search_query = "";
+                                                    root.is_searching_playlist = false;
+                                                    root.filter_playlist_tracks("");
+                                                    pl_search_in.focus();
+                                                }
+                                            }
+                                            Text { text: "✕"; font-size: 9px; color: clr_pl_touch.has-hover ? root.t_text_primary : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Table Column Header (Interactive Sort Columns)
+                            Rectangle {
+                                height: 32px;
+                                border-radius: 6px;
+                                background: root.t_card_bg.transparentize(50%);
+                                HorizontalLayout {
+                                    padding-left: 14px; padding-right: 24px; spacing: 12px;
+
+                                    // Index / Custom Sort Header
+                                    Rectangle {
+                                        width: 32px; horizontal-stretch: 0;
+                                        h_idx_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.set_playlist_sort("custom"); }
+                                        }
+                                        Text {
+                                            text: "#"; font-size: 11px; font-weight: 700;
+                                            color: root.playlist_sort_mode == "custom" ? root.t_accent : (h_idx_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                            horizontal-alignment: center; vertical-alignment: center;
+                                        }
+                                    }
+
+                                    // Thumbnail spacer
+                                    Rectangle { width: 34px; horizontal-stretch: 0; }
+
+                                    // Title Header (Clickable Sort)
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        h_title_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                if root.playlist_sort_mode == "title_asc" {
+                                                    root.set_playlist_sort("title_desc");
+                                                } else {
+                                                    root.set_playlist_sort("title_asc");
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 4px; alignment: start;
+                                            Text {
+                                                text: "TITLE"; font-size: 11px; font-weight: 700;
+                                                color: (root.playlist_sort_mode == "title_asc" || root.playlist_sort_mode == "title_desc") ? root.t_accent : (h_title_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                                vertical-alignment: center;
+                                            }
+                                            if root.playlist_sort_mode == "title_asc": Text { text: "▲"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                            if root.playlist_sort_mode == "title_desc": Text { text: "▼"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    // Artist Header (Clickable Sort)
+                                    Rectangle {
+                                        width: 200px; horizontal-stretch: 0;
+                                        h_artist_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                if root.playlist_sort_mode == "artist_asc" {
+                                                    root.set_playlist_sort("artist_desc");
+                                                } else {
+                                                    root.set_playlist_sort("artist_asc");
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 4px; alignment: start;
+                                            Text {
+                                                text: "ARTIST"; font-size: 11px; font-weight: 700;
+                                                color: (root.playlist_sort_mode == "artist_asc" || root.playlist_sort_mode == "artist_desc") ? root.t_accent : (h_artist_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                                vertical-alignment: center;
+                                            }
+                                            if root.playlist_sort_mode == "artist_asc": Text { text: "▲"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                            if root.playlist_sort_mode == "artist_desc": Text { text: "▼"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    // Duration Header (Clickable Sort)
+                                    Rectangle {
+                                        width: 70px; horizontal-stretch: 0;
+                                        h_dur_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                if root.playlist_sort_mode == "duration_asc" {
+                                                    root.set_playlist_sort("duration_desc");
+                                                } else {
+                                                    root.set_playlist_sort("duration_asc");
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 4px; alignment: end;
+                                            Text {
+                                                text: "DURATION"; font-size: 11px; font-weight: 700;
+                                                color: (root.playlist_sort_mode == "duration_asc" || root.playlist_sort_mode == "duration_desc") ? root.t_accent : (h_dur_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                                vertical-alignment: center; horizontal-alignment: right;
+                                            }
+                                            if root.playlist_sort_mode == "duration_asc": Text { text: "▲"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                            if root.playlist_sort_mode == "duration_desc": Text { text: "▼"; font-size: 9px; color: root.t_accent; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    // Spacer for Edit Mode Reorder Buttons (▲ and ▼)
+                                    if root.is_editing_playlist: Rectangle {
+                                        width: 58px; horizontal-stretch: 0;
+                                    }
+
+                                    // Spacer for Remove Action Button (✕)
+                                    if !root.current_playlist_is_default: Rectangle {
+                                        width: 28px; horizontal-stretch: 0;
+                                    }
+                                }
+                            }
+
+                            // Empty Playlist Placeholder
+                            if root.playlist_tracks.length == 0: Rectangle {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    alignment: center; spacing: 10px;
+                                    Text { text: "󰲸"; font-size: 42px; color: root.t_accent.transparentize(40%); horizontal-alignment: center; }
+                                    Text { text: "This playlist is empty"; font-size: 16px; font-weight: 700; color: root.t_text_primary; horizontal-alignment: center; }
+                                    Text { text: "Add tracks from Search Online, Spotify sync, or your Local Music collection."; font-size: 12px; color: root.t_text_muted; horizontal-alignment: center; }
+                                }
+                            }
+
+                            // Track Listing
+                            if root.playlist_tracks.length > 0: ListView {
+                                for track[idx] in root.playlist_tracks: Rectangle {
+                                    height: 50px;
+                                    border-radius: 8px;
+                                    background: track.id == root.current_track_id
+                                        ? (pl_row_touch.has-hover ? root.t_card_bg.brighter(8%) : root.t_card_bg)
+                                        : (pl_row_touch.pressed ? root.t_card_bg.transparentize(30%) : (pl_row_touch.has-hover ? root.t_card_bg.transparentize(60%) : transparent));
+                                    border-width: 1px;
+                                    border-color: track.id == root.current_track_id ? root.t_accent.transparentize(70%) : (pl_row_touch.has-hover ? root.t_border.transparentize(50%) : transparent);
+                                    animate background { duration: 100ms; }
+                                    animate border-color { duration: 100ms; }
+
+                                    pl_row_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.play_playlist_track(root.current_playlist_id, idx); }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 14px; padding-right: 24px; spacing: 12px;
+
+                                        // Index or Playing Icon
+                                        HorizontalLayout {
+                                            width: 32px; horizontal-stretch: 0; alignment: center;
+                                            if track.id == root.current_track_id: Text {
+                                                text: root.is_playing ? "󰎈" : "󰐊";
+                                                font-size: 13px;
+                                                color: root.t_accent;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: center;
+                                            }
+                                            if track.id != root.current_track_id: Text {
+                                                text: pl_row_touch.has-hover ? "󰐊" : "\{idx + 1}";
+                                                font-size: pl_row_touch.has-hover ? 13px : 12px;
+                                                color: pl_row_touch.has-hover ? root.t_accent : root.t_text_muted;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: center;
+                                            }
+                                        }
+
+                                        // Track Thumbnail Cover Art
+                                        Rectangle {
+                                            width: 36px; height: 36px; border-radius: 6px; clip: true; horizontal-stretch: 0;
+                                            background: root.t_card_bg.brighter(10%);
+                                            border-width: 1px; border-color: root.t_border;
+                                            if track.thumbnail.width > 0: Image {
+                                                width: 100%; height: 100%;
+                                                source: track.thumbnail;
+                                                image-fit: cover;
+                                            }
+                                            if track.thumbnail.width == 0: Text {
+                                                text: "󰎈";
+                                                font-size: 14px;
+                                                color: root.t_accent;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        // Track Title
+                                        Text {
+                                            text: track.title;
+                                            font-size: 13px;
+                                            font-weight: track.id == root.current_track_id ? 700 : 500;
+                                            color: track.id == root.current_track_id ? root.t_accent : root.t_text_primary;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                        }
+
+                                        // Artist
+                                        Text {
+                                            text: track.artist;
+                                            font-size: 12px;
+                                            color: track.id == root.current_track_id ? root.t_accent.transparentize(20%) : root.t_text_muted;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                            width: 200px;
+                                            horizontal-stretch: 0;
+                                        }
+
+                                        // Duration
+                                        Text {
+                                            text: track.duration;
+                                            font-size: 12px;
+                                            color: root.t_text_muted;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                            width: 70px;
+                                            horizontal-stretch: 0;
+                                        }
+
+                                        // Edit Mode Reorder Buttons
+                                        if root.is_editing_playlist: HorizontalLayout {
+                                            spacing: 6px; alignment: center; width: 58px; horizontal-stretch: 0;
+
+                                            // Move Up
+                                            Rectangle {
+                                                width: 26px; height: 26px; border-radius: 5px;
+                                                background: up_tr_touch.pressed ? root.t_bg_surface.darker(15%) : (up_tr_touch.has-hover ? root.t_card_bg.brighter(25%) : root.t_card_bg);
+                                                animate background { duration: 100ms; }
+                                                up_tr_touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.move_playlist_track(root.current_playlist_id, idx, "up"); }
+                                                }
+                                                Text { text: "▲"; font-size: 10px; color: up_tr_touch.has-hover ? root.t_accent : root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+
+                                            // Move Down
+                                            Rectangle {
+                                                width: 26px; height: 26px; border-radius: 5px;
+                                                background: dn_tr_touch.pressed ? root.t_bg_surface.darker(15%) : (dn_tr_touch.has-hover ? root.t_card_bg.brighter(25%) : root.t_card_bg);
+                                                animate background { duration: 100ms; }
+                                                dn_tr_touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.move_playlist_track(root.current_playlist_id, idx, "down"); }
+                                                }
+                                                Text { text: "▼"; font-size: 10px; color: dn_tr_touch.has-hover ? root.t_accent : root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+                                        }
+
+                                        // Remove action (only if custom playlist)
+                                        if !root.current_playlist_is_default: Rectangle {
+                                            width: 28px; height: 28px; border-radius: 6px; horizontal-stretch: 0;
+                                            background: rm_touch.pressed ? root.t_accent_red.transparentize(50%) : (rm_touch.has-hover ? root.t_accent_red.transparentize(75%) : transparent);
+                                            animate background { duration: 100ms; }
+                                            rm_touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.remove_track_from_playlist(root.current_playlist_id, track.id); }
+                                            }
+                                            Text { text: "󰩹"; font-size: 13px; color: rm_touch.has-hover ? root.t_accent_red : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. Tab: Search Online
+                    if root.current_tab == "search": VerticalLayout {
+                        padding: 20px; spacing: 14px;
+                        Text { text: "Search Online Music Streams"; font-size: 20px; font-weight: 700; color: root.t_text_primary; }
+
+                        // Source Selector: YouTube vs Spotify
+                        HorizontalLayout {
+                            spacing: 8px; height: 28px; alignment: start;
+                            Text { text: "Source:"; font-size: 11px; font-weight: 700; color: root.t_text_muted; vertical-alignment: center; }
+
+                            // YouTube Pill
+                            Rectangle {
+                                height: 24px; border-radius: 12px;
+                                background: root.search_source == "YouTube" ? root.t_accent : (src_yt_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                animate background { duration: 100ms; }
+                                src_yt_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.search_source = "YouTube"; }
+                                }
+                                HorizontalLayout { padding-left: 10px; padding-right: 10px; alignment: center;
+                                    Text { text: "󰗃 YouTube"; font-size: 11px; font-weight: 700; color: root.search_source == "YouTube" ? #11111b : root.t_text_primary; vertical-alignment: center; }
+                                }
+                            }
+
+                            // Spotify Pill
+                            Rectangle {
+                                height: 24px; border-radius: 12px;
+                                background: root.search_source == "Spotify" ? #1db954 : (src_sp_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                animate background { duration: 100ms; }
+                                src_sp_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.search_source = "Spotify"; }
+                                }
+                                HorizontalLayout { padding-left: 10px; padding-right: 10px; alignment: center;
+                                    Text { text: "󰓇 Spotify"; font-size: 11px; font-weight: 700; color: root.search_source == "Spotify" ? #11111b : root.t_text_primary; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            height: 38px; spacing: 12px;
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 8px; background: root.t_card_bg;
+                                HorizontalLayout {
+                                    padding-left: 12px; padding-right: 12px;
+                                    search_input := TextInput {
+                                        width: 100%; height: 100%; text <=> root.search_query;
+                                        color: root.t_text_primary; font-size: 13px; vertical-alignment: center;
+                                        accepted => { root.perform_search(self.text, root.search_source); }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: 90px;
+                                border-radius: 8px;
+                                background: search_btn_touch.pressed ? root.t_accent.darker(15%) : (search_btn_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                animate background { duration: 100ms; }
+                                search_btn_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.perform_search(search_input.text != "" ? search_input.text : root.search_query, root.search_source); }
+                                }
+                                HorizontalLayout { alignment: center; spacing: 6px; Text { text: "Search"; font-size: 12px; font-weight: 700; color: #11111b; vertical-alignment: center; } }
+                            }
+                        }
+                        ListView {
+                            for track in root.search_results: Rectangle {
+                                height: 52px; border-radius: 8px;
+                                background: row_touch.pressed ? root.t_card_bg.darker(10%) : (row_touch.has-hover ? root.t_card_bg.transparentize(50%) : transparent);
+                                animate background { duration: 100ms; }
+
+                                HorizontalLayout {
+                                    padding-left: 10px; padding-right: 12px; spacing: 12px;
+                                    alignment: center;
+
+                                    // Track Info area (Clickable to play)
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        background: transparent;
+                                        row_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.play_search_track(track.id); }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 12px;
+                                            alignment: center;
+
+                                            // Song Thumbnail / Icon
+                                            Rectangle {
+                                                width: 38px; height: 38px; border-radius: 6px;
+                                                background: root.t_bg_surface;
+                                                clip: true;
+
+                                                // Fallback music icon
+                                                Text {
+                                                    text: "󰎈";
+                                                    font-size: 16px;
+                                                    color: root.t_accent;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+
+                                                // Song cover if available
+                                                Image {
+                                                    width: 100%; height: 100%;
+                                                    source: track.thumbnail;
+                                                    image-fit: cover;
+                                                }
+                                            }
+
+                                            // Title & Artist
+                                            VerticalLayout {
+                                                alignment: center;
+                                                spacing: 2px;
+                                                horizontal-stretch: 1;
+                                                Text { text: track.title; font-size: 13px; font-weight: 600; color: root.t_text_primary; overflow: elide; }
+                                                Text { text: track.artist; font-size: 11px; color: root.t_text_muted; overflow: elide; }
+                                            }
+
+                                            // Song Duration
+                                            Text {
+                                                text: track.duration;
+                                                font-size: 12px;
+                                                font-weight: 600;
+                                                color: root.t_text_secondary;
+                                                width: 48px;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    // Action Buttons (Play, Enqueue, Download)
+                                    // Play Button
+                                    Rectangle {
+                                        width: 32px; height: 32px; border-radius: 16px;
+                                        background: play_touch.pressed ? root.t_accent.darker(15%) : (play_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                        animate background { duration: 100ms; }
+                                        play_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.play_search_track(track.id); }
+                                        }
+                                        Text { text: "󰐊"; font-size: 13px; font-weight: 800; color: #11111b; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+
+                                    // Enqueue Button
+                                    Rectangle {
+                                        width: 32px; height: 32px; border-radius: 16px;
+                                        background: enq_touch.pressed ? root.t_card_bg.brighter(25%) : (enq_touch.has-hover ? root.t_card_bg.brighter(12%) : root.t_card_bg);
+                                        border-width: 1px;
+                                        border-color: enq_touch.has-hover ? root.t_accent.transparentize(70%) : transparent;
+                                        animate background { duration: 100ms; }
+                                        animate border-color { duration: 100ms; }
+                                        enq_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.enqueue_track(track.id); }
+                                        }
+                                        Text { text: "󰐕"; font-size: 14px; color: root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+
+                                    // Download Button
+                                    Rectangle {
+                                        width: 32px; height: 32px; border-radius: 16px;
+                                        background: dl_touch.pressed ? root.t_card_bg.brighter(25%) : (dl_touch.has-hover ? root.t_card_bg.brighter(12%) : root.t_card_bg);
+                                        border-width: 1px;
+                                        border-color: dl_touch.has-hover ? root.t_accent.transparentize(70%) : transparent;
+                                        animate background { duration: 100ms; }
+                                        animate border-color { duration: 100ms; }
+                                        dl_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.download_track(track.id); }
+                                        }
+                                        Text { text: "󰇚"; font-size: 14px; color: root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 5. Tab: Queue
+                    if root.current_tab == "queue": VerticalLayout {
+                        padding: 20px; spacing: 14px;
+                        HorizontalLayout {
+                            Text { text: "Active Playback Queue"; font-size: 20px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Rectangle {
+                                width: 110px; height: 30px; border-radius: 6px;
+                                background: clr_q_touch.pressed ? root.t_accent_red.transparentize(40%) : (clr_q_touch.has-hover ? root.t_accent_red.transparentize(70%) : root.t_card_bg);
+                                animate background { duration: 100ms; }
+                                clr_q_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.clear_queue(); }
+                                }
+                                HorizontalLayout { alignment: center; spacing: 6px; Text { text: "󰩹"; font-size: 13px; color: root.t_accent_red; vertical-alignment: center; } Text { text: "Clear Queue"; font-size: 11px; font-weight: 700; color: root.t_accent_red; vertical-alignment: center; } }
+                            }
+                        }
+                        ListView {
+                            for track[idx] in root.queue_tracks: Rectangle {
+                                height: 44px; border-radius: 6px;
+                                HorizontalLayout {
+                                    padding-left: 12px; padding-right: 12px; spacing: 12px;
+                                    Text { text: "\{idx + 1}."; font-size: 12px; color: root.t_text_muted; width: 24px; vertical-alignment: center; }
+                                    Text { text: track.title; font-size: 13px; color: root.t_text_primary; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Text { text: track.duration; font-size: 12px; color: root.t_text_muted; vertical-alignment: center; width: 50px; }
+                                    Rectangle {
+                                        width: 26px; height: 26px; border-radius: 13px;
+                                        background: rm_q_touch.pressed ? root.t_accent_red.transparentize(50%) : (rm_q_touch.has-hover ? root.t_accent_red.transparentize(75%) : root.t_card_bg);
+                                        animate background { duration: 100ms; }
+                                        rm_q_touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.remove_from_queue(idx); }
+                                        }
+                                        Text { text: "󰅖"; font-size: 12px; color: rm_q_touch.has-hover ? root.t_accent_red : root.t_text_muted; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 6. Tab: DSP Equalizer
+                    if root.current_tab == "equalizer": VerticalLayout {
+                        padding: 24px; spacing: 18px;
+                        HorizontalLayout {
+                            Text { text: "Digital Signal Processing Equalizer (DSP)"; font-size: 20px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Rectangle {
+                                width: 110px; height: 32px; border-radius: 8px;
+                                background: eq_btn_touch.pressed
+                                    ? (root.eq_enabled ? root.t_accent_green.darker(15%) : root.t_card_bg.darker(15%))
+                                    : (eq_btn_touch.has-hover
+                                        ? (root.eq_enabled ? root.t_accent_green.brighter(10%) : root.t_card_bg.brighter(10%))
+                                        : (root.eq_enabled ? root.t_accent_green : root.t_card_bg));
+                                animate background { duration: 100ms; }
+                                eq_btn_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.eq_enabled = !root.eq_enabled; root.update_eq(); }
+                                }
+                                HorizontalLayout { alignment: center; Text { text: root.eq_enabled ? "EQ ACTIVE" : "EQ BYPASSED"; font-size: 11px; font-weight: 800; color: root.eq_enabled ? #11111b : root.t_text_muted; vertical-alignment: center; } }
+                            }
+                        }
+
+                        // Presets
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Rectangle {
+                                width: 90px; height: 28px; border-radius: 6px;
+                                background: pre_flat.pressed ? root.t_card_bg.darker(10%) : (pre_flat.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: pre_flat.has-hover ? root.t_accent.transparentize(50%) : transparent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                pre_flat := TouchArea { mouse-cursor: pointer; clicked => { root.apply_eq_preset("flat"); } }
+                                HorizontalLayout { alignment: center; Text { text: "Flat"; font-size: 11px; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                width: 110px; height: 28px; border-radius: 6px;
+                                background: pre_bass.pressed ? root.t_card_bg.darker(10%) : (pre_bass.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: pre_bass.has-hover ? root.t_accent.transparentize(50%) : transparent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                pre_bass := TouchArea { mouse-cursor: pointer; clicked => { root.apply_eq_preset("bass_boost"); } }
+                                HorizontalLayout { alignment: center; Text { text: "Bass Boost"; font-size: 11px; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                width: 90px; height: 28px; border-radius: 6px;
+                                background: pre_voc.pressed ? root.t_card_bg.darker(10%) : (pre_voc.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: pre_voc.has-hover ? root.t_accent.transparentize(50%) : transparent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                pre_voc := TouchArea { mouse-cursor: pointer; clicked => { root.apply_eq_preset("vocal"); } }
+                                HorizontalLayout { alignment: center; Text { text: "Vocal"; font-size: 11px; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                width: 100px; height: 28px; border-radius: 6px;
+                                background: pre_elec.pressed ? root.t_card_bg.darker(10%) : (pre_elec.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: pre_elec.has-hover ? root.t_accent.transparentize(50%) : transparent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                pre_elec := TouchArea { mouse-cursor: pointer; clicked => { root.apply_eq_preset("electronic"); } }
+                                HorizontalLayout { alignment: center; Text { text: "Electronic"; font-size: 11px; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                width: 90px; height: 28px; border-radius: 6px;
+                                background: pre_rock.pressed ? root.t_card_bg.darker(10%) : (pre_rock.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: pre_rock.has-hover ? root.t_accent.transparentize(50%) : transparent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                pre_rock := TouchArea { mouse-cursor: pointer; clicked => { root.apply_eq_preset("rock"); } }
+                                HorizontalLayout { alignment: center; Text { text: "Rock"; font-size: 11px; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                        }
+
+                        // 5 Bands Sliders
+                        HorizontalLayout {
+                            spacing: 24px; vertical-stretch: 1; alignment: center;
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center; spacing: 6px;
+                                Text { text: "60 Hz"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; }
+                                Slider { vertical-stretch: 1; minimum: -12.0; maximum: 12.0; value <=> root.eq_band0; changed => { root.update_eq(); } }
+                                Text { text: "\{Math.round(root.eq_band0)} dB"; font-size: 11px; color: root.t_text_primary; horizontal-alignment: center; }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center; spacing: 6px;
+                                Text { text: "250 Hz"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; }
+                                Slider { vertical-stretch: 1; minimum: -12.0; maximum: 12.0; value <=> root.eq_band1; changed => { root.update_eq(); } }
+                                Text { text: "\{Math.round(root.eq_band1)} dB"; font-size: 11px; color: root.t_text_primary; horizontal-alignment: center; }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center; spacing: 6px;
+                                Text { text: "1 kHz"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; }
+                                Slider { vertical-stretch: 1; minimum: -12.0; maximum: 12.0; value <=> root.eq_band2; changed => { root.update_eq(); } }
+                                Text { text: "\{Math.round(root.eq_band2)} dB"; font-size: 11px; color: root.t_text_primary; horizontal-alignment: center; }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center; spacing: 6px;
+                                Text { text: "4 kHz"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; }
+                                Slider { vertical-stretch: 1; minimum: -12.0; maximum: 12.0; value <=> root.eq_band3; changed => { root.update_eq(); } }
+                                Text { text: "\{Math.round(root.eq_band3)} dB"; font-size: 11px; color: root.t_text_primary; horizontal-alignment: center; }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center; spacing: 6px;
+                                Text { text: "12 kHz"; font-size: 11px; color: root.t_text_muted; horizontal-alignment: center; }
+                                Slider { vertical-stretch: 1; minimum: -12.0; maximum: 12.0; value <=> root.eq_band4; changed => { root.update_eq(); } }
+                                Text { text: "\{Math.round(root.eq_band4)} dB"; font-size: 11px; color: root.t_text_primary; horizontal-alignment: center; }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: root.t_border; }
+
+                        HorizontalLayout {
+                            spacing: 10px; alignment: center;
+                            Text { text: "Spatial Audio:"; font-size: 12px; font-weight: 700; color: root.t_text_secondary; vertical-alignment: center; }
+                            Rectangle {
+                                width: 90px; height: 28px; border-radius: 6px;
+                                background: root.eq_spatial_mode == "off" ? root.t_accent : root.t_card_bg;
+                                TouchArea { mouse-cursor: pointer; clicked => { root.eq_spatial_mode = "off"; root.update_eq(); } }
+                                Text { text: "Bypass"; font-size: 11px; font-weight: 700; color: root.eq_spatial_mode == "off" ? #ffffff : root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Rectangle {
+                                width: 110px; height: 28px; border-radius: 6px;
+                                background: root.eq_spatial_mode == "dolby_atmos" ? root.t_accent : root.t_card_bg;
+                                TouchArea { mouse-cursor: pointer; clicked => { root.eq_spatial_mode = "dolby_atmos"; root.update_eq(); } }
+                                Text { text: "Dolby Atmos"; font-size: 11px; font-weight: 700; color: root.eq_spatial_mode == "dolby_atmos" ? #ffffff : root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Rectangle {
+                                width: 110px; height: 28px; border-radius: 6px;
+                                background: root.eq_spatial_mode == "eclipsa" ? root.t_accent : root.t_card_bg;
+                                TouchArea { mouse-cursor: pointer; clicked => { root.eq_spatial_mode = "eclipsa"; root.update_eq(); } }
+                                Text { text: "Eclipsa Audio"; font-size: 11px; font-weight: 700; color: root.eq_spatial_mode == "eclipsa" ? #ffffff : root.t_text_primary; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // 7. Tab: Lyrics
+                    if root.current_tab == "lyrics": VerticalLayout {
+                        padding: 24px; spacing: 14px;
+                        HorizontalLayout {
+                            Text { text: "Synchronized Lyrics"; font-size: 20px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            if !root.lyrics_auto_locked && root.synced_lyrics.length > 0: Rectangle {
+                                width: 150px; height: 32px; border-radius: 16px;
+                                background: lock_touch.pressed ? root.t_accent.transparentize(70%) : (lock_touch.has-hover ? root.t_card_bg.brighter(10%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: root.t_accent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                lock_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.lyrics_auto_locked = true;
+                                        root.lyrics_viewport_y = Math.min(0px, - (root.active_lyric_index * 60px) + 220px);
+                                        root.last_lyrics_target_y = Math.min(0px, - (root.active_lyric_index * 60px) + 220px) / 1px;
+                                        root.lyrics_suppress_ticks = 4;
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 6px;
+                                    Text { text: ""; font-size: 13px; color: root.t_accent; vertical-alignment: center; }
+                                    Text { text: "Sync with Music"; font-size: 11px; font-weight: 700; color: root.t_accent; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        ScrollView {
+                            content-y <=> root.lyrics_viewport_y;
+                            animate content-y { duration: 250ms; easing: ease-out; }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                for item[idx] in root.synced_lyrics: Rectangle {
+                                    height: 52px; border-radius: 8px;
+                                    background: lyric_row_touch.has-hover ? root.t_card_bg.transparentize(80%) : transparent;
+                                    animate background { duration: 100ms; }
+                                    lyric_row_touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.seek(item.time_secs);
+                                            root.lyrics_auto_locked = true;
+                                            root.lyrics_viewport_y = Math.min(0px, - (idx * 60px) + 220px);
+                                            root.last_lyrics_target_y = Math.min(0px, - (idx * 60px) + 220px) / 1px;
+                                            root.lyrics_suppress_ticks = 4;
+                                        }
+                                    }
+                                    Text {
+                                        text: item.text;
+                                        font-size: idx == root.active_lyric_index ? 22px : 14px;
+                                        font-weight: idx == root.active_lyric_index ? 800 : 500;
+                                        color: idx == root.active_lyric_index ? root.t_accent : root.t_text_muted;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.synced_lyrics.length == 0: Text {
+                            text: root.plain_lyrics != "" ? root.plain_lyrics : "No lyrics available for this song.";
+                            font-size: 14px; color: root.t_text_muted; horizontal-alignment: center;
+                        }
+                    }
+
+                    // 8. Tab: Themes & Settings
+                    if root.current_tab == "settings": VerticalLayout {
+                        padding: 24px; spacing: 18px; alignment: start;
+                        Text { text: "Theme Engine & Customization"; font-size: 20px; font-weight: 700; color: root.t_text_primary; }
+
+                        Text { text: "SELECT SYSTEM & ARCY THEME:"; font-size: 11px; font-weight: 800; color: root.t_text_muted; letter-spacing: 1px; }
+
+                        HorizontalLayout {
+                            spacing: 12px; height: 50px;
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_m.pressed ? root.t_card_bg.darker(10%) : (th_m.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "mocha" ? 2px : 1px;
+                                border-color: root.theme_name == "mocha" ? #89b4fa : (th_m.has-hover ? #89b4fa.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_m := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("mocha"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #89b4fa; } Text { text: "Mocha"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_n.pressed ? root.t_card_bg.darker(10%) : (th_n.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "nord" ? 2px : 1px;
+                                border-color: root.theme_name == "nord" ? #88c0d0 : (th_n.has-hover ? #88c0d0.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_n := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("nord"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #88c0d0; } Text { text: "Nord"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_t.pressed ? root.t_card_bg.darker(10%) : (th_t.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "tokyo" ? 2px : 1px;
+                                border-color: root.theme_name == "tokyo" ? #7aa2f7 : (th_t.has-hover ? #7aa2f7.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_t := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("tokyo"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #7aa2f7; } Text { text: "Tokyo"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_c.pressed ? root.t_card_bg.darker(10%) : (th_c.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "cyberpunk" ? 2px : 1px;
+                                border-color: root.theme_name == "cyberpunk" ? #00f0ff : (th_c.has-hover ? #00f0ff.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_c := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("cyberpunk"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #00f0ff; } Text { text: "Cyberpunk"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_d.pressed ? root.t_card_bg.darker(10%) : (th_d.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "dracula" ? 2px : 1px;
+                                border-color: root.theme_name == "dracula" ? #bd93f9 : (th_d.has-hover ? #bd93f9.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_d := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("dracula"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #bd93f9; } Text { text: "Dracula"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px;
+                                background: th_g.pressed ? root.t_card_bg.darker(10%) : (th_g.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: root.theme_name == "gruvbox" ? 2px : 1px;
+                                border-color: root.theme_name == "gruvbox" ? #8ec07c : (th_g.has-hover ? #8ec07c.transparentize(50%) : root.t_border);
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                th_g := TouchArea { mouse-cursor: pointer; clicked => { root.switch_theme("gruvbox"); } }
+                                HorizontalLayout { alignment: center; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; background: #8ec07c; } Text { text: "Gruvbox"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; } }
+                            }
+                        }
+
+                        // Divider
+                        Rectangle { height: 1px; background: root.t_border; }
+
+                        Text { text: "CACHE & SYSTEM STORAGE:"; font-size: 11px; font-weight: 800; color: root.t_text_muted; letter-spacing: 1px; }
+
+                        HorizontalLayout {
+                            spacing: 16px;
+                            Text { text: "Store Mini Thumbnails during indexing (saves UI memory)"; color: root.t_text_primary; font-size: 13px; vertical-alignment: center; }
+                            Rectangle {
+                                width: 46px; height: 24px; border-radius: 12px;
+                                background: root.setting_mini_thumbnails ? root.t_accent_green : root.t_card_bg;
+                                TouchArea { mouse-cursor: pointer; clicked => { root.setting_mini_thumbnails = !root.setting_mini_thumbnails; root.toggle_mini_thumbnails(); } }
+                                Rectangle {
+                                    width: 20px; height: 20px; border-radius: 10px; background: white;
+                                    x: root.setting_mini_thumbnails ? 24px : 2px; y: 2px;
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 16px;
+                            Text { text: "Music Download Directory:"; color: root.t_text_primary; font-size: 13px; vertical-alignment: center; }
+                            Rectangle {
+                                width: 340px; height: 32px; background: root.t_card_bg; border-radius: 6px;
+                                HorizontalLayout {
+                                    padding-left: 10px; padding-right: 10px;
+                                    TextInput {
+                                        width: 100%; height: 100%; text <=> root.setting_download_path;
+                                        color: root.t_text_primary; font-size: 13px;
+                                        accepted => { root.update_download_path(self.text); }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Divider
+                        Rectangle { height: 1px; background: root.t_border; }
+
+                        Text { text: "SPOTIFY METADATA & PLAYLIST INTEGRATION:"; font-size: 11px; font-weight: 800; color: root.t_text_muted; letter-spacing: 1px; }
+
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "Connect your Spotify account to import Liked Songs and Playlists with rich cover art & metadata.";
+                                color: root.t_text_primary; font-size: 12px;
+                            }
+                            Text {
+                                text: "Connect instantly using your browser session or log in directly:";
+                                color: root.t_text_muted; font-size: 11px;
+                            }
+                        }
+
+                        // One-Click Login & Browser Import Buttons
+                        HorizontalLayout {
+                            spacing: 12px; height: 38px;
+
+                            // Import from Browser button
+                            Rectangle {
+                                horizontal-stretch: 1; height: 38px; border-radius: 6px;
+                                background: sp_import_touch.pressed ? #1ed760.darker(15%) : (sp_import_touch.has-hover ? #1ed760.brighter(10%) : #1db954);
+                                animate background { duration: 100ms; }
+                                sp_import_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.spotify_import_browser(); }
+                                }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰓇"; font-size: 16px; color: #11111b; vertical-alignment: center; }
+                                    Text { text: "Import from Browser"; font-size: 12px; font-weight: 700; color: #11111b; vertical-alignment: center; }
+                                }
+                            }
+
+                            // Direct Login button
+                            Rectangle {
+                                horizontal-stretch: 1; height: 38px; border-radius: 6px;
+                                background: sp_login_touch.pressed ? root.t_card_bg.darker(15%) : (sp_login_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px; border-color: root.is_logging_in_spotify ? #1db954 : root.t_border;
+                                animate background { duration: 100ms; }
+                                sp_login_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.spotify_launch_login(); }
+                                }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰓇"; font-size: 16px; color: root.is_logging_in_spotify ? #1db954 : root.t_text_primary; vertical-alignment: center; }
+                                    Text {
+                                        text: root.is_logging_in_spotify ? "Waiting for Login..." : "Login with Spotify";
+                                        font-size: 12px; font-weight: 700;
+                                        color: root.is_logging_in_spotify ? #1db954 : root.t_text_primary;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.spotify_sync_status != "": Text {
+                            text: root.spotify_sync_status;
+                            font-size: 11px; font-weight: 600;
+                            color: root.t_accent_green;
+                        }
+
+                        // Advanced Manual Entry
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "Or enter sp_dc cookie / Bearer token manually:";
+                                color: root.t_text_muted; font-size: 11px;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px; height: 34px;
+                                Rectangle {
+                                    horizontal-stretch: 1; background: root.t_card_bg; border-radius: 6px;
+                                    border-width: 1px; border-color: root.t_border;
+                                    clip: true;
+                                    sp_input := TextInput {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        height: 100%;
+                                        text <=> root.spotify_sp_dc_input;
+                                        single-line: true;
+                                        input-type: root.spotify_cookie_revealed ? InputType.text : InputType.password;
+                                        color: root.t_text_primary; font-size: 12px; vertical-alignment: center;
+                                        accepted => { root.sync_spotify(self.text); }
+                                    }
+                                }
+
+                                // Sync Manually Button
+                                Rectangle {
+                                    width: 130px; height: 34px; border-radius: 6px;
+                                    background: sp_sync_touch.pressed ? root.t_card_bg.darker(15%) : (sp_sync_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    border-width: 1px; border-color: root.t_border;
+                                    animate background { duration: 100ms; }
+                                    sp_sync_touch := TouchArea {
+                                        width: 100%; height: 100%;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.sync_spotify(sp_input.text); }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: center; spacing: 6px;
+                                        Text { text: "󰓇"; font-size: 14px; color: root.t_accent_green; vertical-alignment: center; }
+                                        Text { text: root.is_syncing_spotify ? "Syncing..." : "Sync Manually"; font-size: 11px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                                    }
+                                }
+
+                                // Unhide / Hide Option Button beside Sync Manually
+                                Rectangle {
+                                    width: 90px; height: 34px; border-radius: 6px;
+                                    background: sp_unhide_touch.pressed ? root.t_card_bg.darker(15%) : (sp_unhide_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                    border-width: 1px; border-color: root.spotify_cookie_revealed ? root.t_accent : root.t_border;
+                                    animate background { duration: 100ms; }
+                                    animate border-color { duration: 100ms; }
+                                    sp_unhide_touch := TouchArea {
+                                        width: 100%; height: 100%;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.spotify_cookie_revealed = !root.spotify_cookie_revealed; }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: center; spacing: 6px;
+                                        Text {
+                                            text: root.spotify_cookie_revealed ? "" : "";
+                                            font-size: 13px;
+                                            color: root.spotify_cookie_revealed ? root.t_accent : root.t_text_secondary;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: root.spotify_cookie_revealed ? "Hide" : "Unhide";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: root.spotify_cookie_revealed ? root.t_accent : root.t_text_primary;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Divider
+                        Rectangle { height: 1px; background: root.t_border; }
+
+                        Text { text: "DAEMON & BACKGROUND PLAYBACK LIFECYCLE:"; font-size: 11px; font-weight: 800; color: root.t_text_muted; letter-spacing: 1px; }
+
+                        HorizontalLayout {
+                            spacing: 16px;
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text { text: "Music Daemon Management"; color: root.t_text_primary; font-size: 13px; font-weight: 700; }
+                                Text { text: "The audio daemon continues playing your queue in the background even when the GUI window is closed."; color: root.t_text_muted; font-size: 11px; }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px; height: 38px;
+
+                            Rectangle {
+                                width: 220px; height: 38px;
+                                border-radius: 8px;
+                                background: exit_s_touch.pressed ? root.t_accent.transparentize(70%) : (exit_s_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                                border-width: 1px;
+                                border-color: exit_s_touch.has-hover ? root.t_accent.brighter(20%) : root.t_accent;
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                exit_s_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.exit_gui(); }
+                                }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰅖"; font-size: 14px; color: root.t_accent; vertical-alignment: center; }
+                                    Text { text: "Exit GUI (Keep Playing)"; font-size: 12px; font-weight: 700; color: root.t_text_primary; vertical-alignment: center; }
+                                }
+                            }
+
+                            Rectangle {
+                                width: 200px; height: 38px;
+                                border-radius: 8px;
+                                background: stop_s_touch.pressed ? root.t_accent_red.darker(15%) : (stop_s_touch.has-hover ? root.t_accent_red.brighter(10%) : root.t_accent_red);
+                                animate background { duration: 100ms; }
+                                stop_s_touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.stop_daemon_and_exit(); }
+                                }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Text { text: "󰐥"; font-size: 14px; color: #11111b; vertical-alignment: center; }
+                                    Text { text: "Stop Daemon & Exit"; font-size: 12px; font-weight: 700; color: #11111b; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { width: 1px; background: root.t_border; }
+
+                // Column: Sleek Right-Hand Toolbar (Exit GUI, Maximize Toggle & Theme Selector)
+                Rectangle {
+                    width: 48px;
+                    background: @linear-gradient(180deg, root.t_bg_surface, root.t_bg_overlay);
+
+                    VerticalLayout {
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        alignment: start;
+
+                        // Exit GUI Button
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: 8px;
+                            background: exit_touch.pressed ? root.t_accent_red.transparentize(50%) : (exit_touch.has-hover ? root.t_accent_red.transparentize(75%) : root.t_card_bg);
+                            border-width: 1px;
+                            border-color: exit_touch.has-hover ? root.t_accent_red : root.t_accent_red.transparentize(70%);
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            exit_touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.exit_gui(); }
+                            }
+                            Text {
+                                text: "󰅖";
+                                font-size: 14px;
+                                font-weight: 800;
+                                color: exit_touch.has-hover ? root.t_accent_red : root.t_text_secondary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Maximize / Restore Toggle Button
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: 8px;
+                            background: max_touch.pressed ? root.t_accent.transparentize(60%) : (max_touch.has-hover ? root.t_accent.transparentize(80%) : root.t_card_bg);
+                            border-width: 1px;
+                            border-color: max_touch.has-hover ? root.t_accent : root.t_accent.transparentize(70%);
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            max_touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.toggle_maximize(); }
+                            }
+                            Text {
+                                text: root.is_maximized ? "󰊔" : "󰊓";
+                                font-size: 15px;
+                                color: max_touch.has-hover ? root.t_accent : root.t_text_secondary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Switch to Web GUI Button
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: 8px;
+                            background: web_g_touch.pressed ? root.t_accent_secondary.transparentize(50%) : (web_g_touch.has-hover ? root.t_accent_secondary.transparentize(80%) : root.t_card_bg);
+                            border-width: 1px;
+                            border-color: web_g_touch.has-hover ? root.t_accent_secondary : root.t_accent_secondary.transparentize(70%);
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            web_g_touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_to_web_gui(); }
+                            }
+                            Text {
+                                text: "󰖟";
+                                font-size: 16px;
+                                color: web_g_touch.has-hover ? root.t_accent_secondary : root.t_text_secondary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle { height: 1px; width: 32px; background: root.t_border; }
+
+                        // Palette Icon
+                        Text {
+                            text: "󰔎";
+                            font-size: 16px;
+                            color: root.t_text_muted;
+                            horizontal-alignment: center;
+                        }
+
+                        // Vertical Theme Dots
+                        // Mocha
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_mocha.pressed ? 18px : (t_mocha.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #89b4fa;
+                                border-width: root.theme_name == "mocha" ? 2px : (t_mocha.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "mocha" ? 8px : (t_mocha.has-hover ? 6px : 0px);
+                                drop-shadow-color: #89b4fa;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_mocha := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("mocha"); }
+                            }
+                        }
+                        // Nord
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_nord.pressed ? 18px : (t_nord.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #88c0d0;
+                                border-width: root.theme_name == "nord" ? 2px : (t_nord.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "nord" ? 8px : (t_nord.has-hover ? 6px : 0px);
+                                drop-shadow-color: #88c0d0;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_nord := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("nord"); }
+                            }
+                        }
+                        // Tokyo
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_tokyo.pressed ? 18px : (t_tokyo.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #7aa2f7;
+                                border-width: root.theme_name == "tokyo" ? 2px : (t_tokyo.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "tokyo" ? 8px : (t_tokyo.has-hover ? 6px : 0px);
+                                drop-shadow-color: #7aa2f7;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_tokyo := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("tokyo"); }
+                            }
+                        }
+                        // Cyberpunk
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_cyber.pressed ? 18px : (t_cyber.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #00f0ff;
+                                border-width: root.theme_name == "cyberpunk" ? 2px : (t_cyber.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "cyberpunk" ? 8px : (t_cyber.has-hover ? 6px : 0px);
+                                drop-shadow-color: #00f0ff;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_cyber := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("cyberpunk"); }
+                            }
+                        }
+                        // Dracula
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_dracula.pressed ? 18px : (t_dracula.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #bd93f9;
+                                border-width: root.theme_name == "dracula" ? 2px : (t_dracula.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "dracula" ? 8px : (t_dracula.has-hover ? 6px : 0px);
+                                drop-shadow-color: #bd93f9;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_dracula := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("dracula"); }
+                            }
+                        }
+                        // Gruvbox
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: t_gruvbox.pressed ? 18px : (t_gruvbox.has-hover ? 25px : 22px);
+                                height: self.width;
+                                border-radius: self.width / 2;
+                                background: #8ec07c;
+                                border-width: root.theme_name == "gruvbox" ? 2px : (t_gruvbox.has-hover ? 2px : 0px);
+                                border-color: white;
+                                drop-shadow-blur: root.theme_name == "gruvbox" ? 8px : (t_gruvbox.has-hover ? 6px : 0px);
+                                drop-shadow-color: #8ec07c;
+                                animate width { duration: 80ms; }
+                                animate height { duration: 80ms; }
+                            }
+                            t_gruvbox := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.switch_theme("gruvbox"); }
+                            }
+                        }
+                    }
+                }
+
+            }
+
+            Rectangle { height: 1px; background: root.t_border; }
+
+            // Bottom Playback Bar
+            Rectangle {
+                height: 82px;
+                background: root.t_bg_overlay;
+
+                HorizontalLayout {
+                    padding-left: 18px; padding-right: 18px; padding-top: 8px; padding-bottom: 8px;
+                    spacing: 16px;
+
+                    // Left: Active Track Details & Thumbnail
+                    HorizontalLayout {
+                        width: 250px; spacing: 12px; alignment: start;
+                        Rectangle {
+                            width: 52px; height: 52px; border-radius: 8px; clip: true; background: root.t_card_bg;
+                            border-width: 1px; border-color: root.t_border;
+                            Text {
+                                text: "󰎈";
+                                font-size: 22px;
+                                color: root.t_accent;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            Image { width: 100%; height: 100%; source: root.current_track_thumbnail; image-fit: cover; }
+                        }
+                        VerticalLayout {
+                            alignment: center; spacing: 3px;
+                            Text { text: root.current_track_title != "" ? root.current_track_title : "Arcy Music"; color: root.t_text_primary; font-size: 13px; font-weight: 700; overflow: elide; }
+                            Text { text: root.current_track_artist != "" ? root.current_track_artist : "Ready to play"; color: root.t_text_muted; font-size: 11px; overflow: elide; }
+                        }
+                    }
+
+                    // Middle: Playback Seeker & Media Controls
+                    VerticalLayout {
+                        horizontal-stretch: 1; alignment: center; spacing: 6px;
+                        HorizontalLayout {
+                            alignment: center; spacing: 20px;
+
+                            // Shuffle
+                            Rectangle {
+                                width: 34px; height: 34px; border-radius: 17px;
+                                background: shuf_touch.pressed ? root.t_card_bg.transparentize(40%) : (shuf_touch.has-hover ? root.t_card_bg.transparentize(60%) : transparent);
+                                animate background { duration: 100ms; }
+                                shuf_touch := TouchArea {
+                                    width: 100%; height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle_shuffle(); }
+                                }
+                                Text {
+                                    text: "";
+                                    font-size: 16px;
+                                    color: root.is_shuffle ? root.t_accent : (shuf_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+
+                            // Prev
+                            Rectangle {
+                                width: 34px; height: 34px; border-radius: 17px;
+                                background: prev_touch.pressed ? root.t_card_bg.transparentize(40%) : (prev_touch.has-hover ? root.t_card_bg.transparentize(60%) : transparent);
+                                animate background { duration: 100ms; }
+                                prev_touch := TouchArea {
+                                    width: 100%; height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.prev_track(); }
+                                }
+                                Text {
+                                    text: "";
+                                    font-size: 18px;
+                                    color: prev_touch.has-hover ? root.t_accent : root.t_text_primary;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+
+                            // Play/Pause
+                            Rectangle {
+                                width: 44px; height: 44px; border-radius: 22px;
+                                background: play_bar_touch.pressed ? root.t_accent.darker(15%) : (play_bar_touch.has-hover ? root.t_accent.brighter(10%) : root.t_accent);
+                                drop-shadow-blur: 8px;
+                                drop-shadow-color: root.t_accent.transparentize(50%);
+                                animate background { duration: 100ms; }
+                                play_bar_touch := TouchArea {
+                                    width: 100%; height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle_play(); }
+                                }
+                                Text {
+                                    text: root.is_playing ? "" : "";
+                                    font-size: root.is_playing ? 18px : 19px;
+                                    color: #11111b;
+                                    font-weight: 800;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+
+                            // Next
+                            Rectangle {
+                                width: 34px; height: 34px; border-radius: 17px;
+                                background: next_touch.pressed ? root.t_card_bg.transparentize(40%) : (next_touch.has-hover ? root.t_card_bg.transparentize(60%) : transparent);
+                                animate background { duration: 100ms; }
+                                next_touch := TouchArea {
+                                    width: 100%; height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.next_track(); }
+                                }
+                                Text {
+                                    text: "";
+                                    font-size: 18px;
+                                    color: next_touch.has-hover ? root.t_accent : root.t_text_primary;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+
+                            // Repeat
+                            Rectangle {
+                                width: 34px; height: 34px; border-radius: 17px;
+                                background: rep_touch.pressed ? root.t_card_bg.transparentize(40%) : (rep_touch.has-hover ? root.t_card_bg.transparentize(60%) : transparent);
+                                animate background { duration: 100ms; }
+                                rep_touch := TouchArea {
+                                    width: 100%; height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle_repeat(); }
+                                }
+                                Text {
+                                    text: root.repeat_mode == "One" ? "󰑗" : "";
+                                    font-size: 16px;
+                                    color: root.repeat_mode != "Off" ? root.t_accent : (rep_touch.has-hover ? root.t_text_primary : root.t_text_muted);
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Progress Seeker Bar
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text { text: root.playback_position_str; color: root.t_text_muted; font-size: 11px; vertical-alignment: center; }
+                            ModernProgressBar {
+                                horizontal-stretch: 1;
+                                value: root.playback_position;
+                                maximum: root.playback_duration > 0.0 ? root.playback_duration : 100.0;
+                                bar_color: root.t_bg_surface;
+                                fill_color: root.t_accent;
+                                thumb_color: root.t_text_primary;
+                                seek(val) => { root.seek(val); }
+                                seek_relative(delta) => { root.seek_relative(delta); }
+                            }
+                            Text { text: root.playback_duration_str; color: root.t_text_muted; font-size: 11px; vertical-alignment: center; }
+                        }
+                    }
+
+                    // Right: Music Volume Control, Queue & Lyrics Toggle
+                    HorizontalLayout {
+                        width: 250px; spacing: 10px; alignment: end;
+
+                        // Lyrics Toggle Button (Spotify-style Microphone icon)
+                        Rectangle {
+                            width: 32px; height: 32px; border-radius: 8px;
+                            background: root.current_tab == "lyrics"
+                                ? root.t_accent.transparentize(80%)
+                                : (lyrics_bar_touch.pressed ? root.t_card_bg.darker(10%) : (lyrics_bar_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg));
+                            border-width: 1px;
+                            border-color: root.current_tab == "lyrics" ? root.t_accent : (lyrics_bar_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border);
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            lyrics_bar_touch := TouchArea {
+                                width: 100%; height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if root.current_tab == "lyrics" {
+                                        root.current_tab = "library";
+                                    } else {
+                                        root.current_tab = "lyrics";
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "";
+                                font-size: 15px;
+                                color: root.current_tab == "lyrics" ? root.t_accent : (lyrics_bar_touch.has-hover ? root.t_accent : root.t_text_secondary);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Queue Toggle Button
+                        Rectangle {
+                            width: 32px; height: 32px; border-radius: 8px;
+                            background: root.current_tab == "queue"
+                                ? root.t_accent.transparentize(80%)
+                                : (queue_bar_touch.pressed ? root.t_card_bg.darker(10%) : (queue_bar_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg));
+                            border-width: 1px;
+                            border-color: root.current_tab == "queue" ? root.t_accent : (queue_bar_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border);
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            queue_bar_touch := TouchArea {
+                                width: 100%; height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if root.current_tab == "queue" {
+                                        root.current_tab = "library";
+                                    } else {
+                                        root.current_tab = "queue";
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "";
+                                font-size: 15px;
+                                color: root.current_tab == "queue" ? root.t_accent : (queue_bar_touch.has-hover ? root.t_accent : root.t_text_secondary);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Mute button
+                        Rectangle {
+                            width: 32px; height: 32px; border-radius: 8px;
+                            background: mute_touch.pressed ? root.t_card_bg.darker(10%) : (mute_touch.has-hover ? root.t_card_bg.brighter(15%) : root.t_card_bg);
+                            border-width: 1px;
+                            border-color: mute_touch.has-hover ? root.t_accent.transparentize(50%) : root.t_border;
+                            animate background { duration: 100ms; }
+                            animate border-color { duration: 100ms; }
+                            mute_touch := TouchArea {
+                                width: 100%; height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => { root.toggle_mute(); }
+                            }
+                            Text {
+                                text: root.volume == 0.0 ? "" : (root.volume > 0.5 ? "" : "");
+                                font-size: 16px;
+                                color: root.volume == 0.0 ? root.t_accent_red : (mute_touch.has-hover ? root.t_accent : root.t_text_secondary);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Slider {
+                            width: 95px; minimum: 0.0; maximum: 1.0; value <=> root.volume;
+                            changed => { root.volume_changed(self.value); }
+                        }
+                        Text { text: "\{Math.round(root.volume * 100)}%"; font-size: 11px; font-weight: 600; color: root.t_text_secondary; width: 32px; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+}
+}

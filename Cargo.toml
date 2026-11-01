@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "arcy-music-core",
+    "arcy-music-daemon",
+    "arcy-music-gui-native",
+    "arcy-music-gui-web",
+    "arcy-music-cli"
+]
+resolver = "2"
+
+[profile.dev]
+debug = 0
+incremental = false
+split-debuginfo = "unpacked"
+strip = "debuginfo"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 3

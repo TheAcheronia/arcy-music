@@ -1,0 +1,14 @@
+[Unit]
+Description=Arcy Headless Background System & Audio Daemon
+After=network.target sound.target pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/arcy-daemon
+Restart=on-failure
+RestartSec=3s
+Environment=ARCY_PORT=13338
+MemoryMax=150M
+
+[Install]
+WantedBy=default.target

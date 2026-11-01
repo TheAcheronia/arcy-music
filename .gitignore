@@ -1,0 +1,36 @@
+# Build outputs
+/target
+Cargo.lock
+
+# Database & runtime files (Never commit user databases or playlists)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs and runtime artifacts
+*.log
+*.pid
+run.log
+daemon.log
+
+# Temporary and backup files
+*.bak
+*.orig*
+*.tmp
+*~
+.DS_Store
+
+# Secrets and environment configs
+.env
+*.env
+cookies.txt
+credentials.json
+sp_dc.txt
+token.txt
+
+# Development scratch files
+test_*.slint
+insert_dummy.sql
+scratch/
